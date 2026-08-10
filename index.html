@@ -179,13 +179,16 @@ select.inp{appearance:none;background-image:linear-gradient(45deg,transparent 50
     <div class="sechead"><h2 class="sec">Onde está o dinheiro</h2><button class="add" id="addSaldo">+ conta</button></div>
     <div class="list" id="saldos"></div>
 
-    <div class="sechead"><h2 class="sec">Contas fixas do mês</h2><button class="add" id="addConta">+ conta fixa</button></div>
+    <div class="sechead"><h2 class="sec">Sai do banco este mês</h2><button class="add" id="addConta">+ conta fixa</button></div>
     <div class="list" id="contas"></div>
+
+    <div class="sechead"><h2 class="sec">Vai na fatura do cartão</h2><span class="add" style="color:var(--ink3)">não pague à parte</span></div>
+    <div class="list" id="contasCartao"></div>
 
     <div class="sechead"><h2 class="sec">Últimos lançamentos</h2><span class="add" style="color:var(--ink3)">toque para editar</span></div>
     <div class="list" id="eventos"></div>
 
-    <div class="sechead"><h2 class="sec">Cartões, mês a mês</h2></div>
+    <div class="sechead"><h2 class="sec">Cartões</h2><span class="add" style="color:var(--ink3)">toque para abrir</span></div>
     <div class="list" id="cartoes"></div>
 
     <p style="color:var(--ink3);font-size:11px;margin:22px 0 8px;text-align:center" id="rodape"></p>
@@ -282,6 +285,17 @@ select.inp{appearance:none;background-image:linear-gradient(45deg,transparent 50
     </div>
     <div class="lbl">De qual frente</div>
     <div class="chips" id="ctFrentes"></div>
+    <div class="lbl">Como é pago</div>
+    <div class="chips" id="ctPagoPor"></div>
+    <div class="lbl">Com que frequência</div>
+    <div class="chips" id="ctPeriodo"></div>
+    <div id="ctMesBox" class="hide">
+      <div class="lbl">Em qual mês cobra</div>
+      <select class="inp" id="ctMes"></select>
+    </div>
+    <div class="destino" style="margin-top:12px">
+      Se for no cartão, ela deixa de aparecer como conta a pagar e passa a somar dentro da fatura daquele cartão. Um lugar só, nunca dois.
+    </div>
     <div id="ctMsg"></div>
     <div style="height:20px"></div>
     <button class="btn" id="ctSalvar">Salvar</button>
@@ -289,6 +303,18 @@ select.inp{appearance:none;background-image:linear-gradient(45deg,transparent 50
     <button class="btn danger hide" id="ctExcluir">Excluir esta conta</button>
     <div style="height:10px"></div>
     <button class="btn ghost" id="ctCancelar">Cancelar</button>
+  </div>
+</div>
+
+<!-- ================= CARTÕES ================= -->
+<div class="sheet hide" id="sheetCartoes">
+  <div class="panel">
+    <div class="handle"></div>
+    <h3>Cartões</h3>
+    <p style="color:var(--ink2);font-size:14px;margin:0 0 14px" id="cdResumo"></p>
+    <div id="cdLista"></div>
+    <div style="height:20px"></div>
+    <button class="btn ghost" id="cdFechar">Fechar</button>
   </div>
 </div>
 
@@ -356,7 +382,7 @@ const TIPOS_SALDO = [
 ];
 
 let sessao=null, eu=null, lente="tudo";
-let dados={cat:[],contas:[],parcelas:[],saldos:[],eventos:[],pagos:[],cartoesLista:[]};
+let dados={cat:[],contas:[],parcelas:[],saldos:[],eventos:[],pagos:[],cartoes:[],cartoesLista:[]};
 let form={id:null,tipo:"gasto",catId:null,frente:null,forma:"pix",cartao:null};
 let contaEd={id:null,frente:"casa"};
 let saldoEd={id:null,frente:"casa",tipo:"conta"};
@@ -464,18 +490,19 @@ async function abrirApp(){
 async function carregar(){
   const mes = mesRef();
   try{
-    const [membro,cat,contas,parcelas,saldos,eventos,pagos] = await Promise.all([
+    const [membro,cat,contas,parcelas,saldos,eventos,pagos,cartoes] = await Promise.all([
       rest("membro?select=nome,papel,casal_id"),
       rest("categoria?select=id,pai,filho,tipo,frentes,ativo&ativo=is.true&order=pai.asc,filho.asc"),
-      rest("conta_fixa?select=id,descricao,valor,dia,frente&ativo=is.true&order=dia.asc"),
-      rest("parcela_futura?select=cartao,mes_ref,valor,frente,pago&order=mes_ref.asc"),
+      rest("conta_fixa?select=id,descricao,valor,dia,frente,cartao,periodicidade,mes_venc&ativo=is.true&order=dia.asc"),
+      rest("parcela_futura?select=id,cartao,mes_ref,valor,frente,pago&order=mes_ref.asc"),
       rest("conta_saldo?select=id,nome,frente,tipo,valor&order=valor.desc"),
       rest("evento?select=id,data,valor,tipo,frente,descricao,forma,cartao,categoria_id,origem&order=data.desc,criado_em.desc&limit=150"),
-      rest("pagamento_conta?select=conta_fixa_id,mes_ref,valor&mes_ref=eq."+mes)
+      rest("pagamento_conta?select=conta_fixa_id,mes_ref,valor&mes_ref=eq."+mes),
+      rest("cartao?select=id,nome,dia_venc,limite,frente&ativo=is.true&order=nome.asc")
     ]);
     eu = membro && membro[0] ? membro[0] : {nome:"",papel:"parceiro"};
     if(eu.casal_id){ casalCache = eu.casal_id; try{ localStorage.setItem(LS_CASAL,eu.casal_id); }catch(e){} }
-    dados={cat,contas,parcelas,saldos,eventos,pagos,cartoesLista:[...new Set(parcelas.map(p=>p.cartao))]};
+    dados={cat,contas,parcelas,saldos,eventos,pagos,cartoes,cartoesLista:cartoes.map(c=>c.nome)};
     $("#btnSair").textContent = (eu.nome||"") + " · sair";
     montarLentes(); pintar();
   }catch(e){
@@ -493,13 +520,39 @@ async function meuCasal(){
 
 /* ---------------- calculos ---------------- */
 function filtra(arr){ return lente==="tudo" ? arr : arr.filter(x=>x.frente===lente); }
+
+/* Fatura de um cartao num mes = parcelas projetadas + assinaturas fixas
+   daquele cartao. Compras lancadas no app aparecem a parte, porque a data
+   de fechamento decide se caem nesta fatura ou na proxima. */
+function cobraNesteMes(c, mes){
+  if(c.periodicidade!=="anual") return true;
+  return (+mes.slice(5,7)) === (+c.mes_venc||1);
+}
+function custoMensal(c){ return c.periodicidade==="anual" ? (+c.valor)/12 : +c.valor; }
+
+function fatura(nomeCartao, mes){
+  const parc = dados.parcelas.find(p=>p.cartao===nomeCartao && p.mes_ref===mes);
+  const assin = dados.contas.filter(c=>c.cartao===nomeCartao && cobraNesteMes(c,mes));
+  const somaAssin = assin.reduce((a,c)=>a+ +c.valor,0);
+  const valorParc = parc ? +parc.valor : 0;
+  return { parcelaId: parc?parc.id:null, pago: parc?!!parc.pago:false,
+           parcelas: valorParc, assinaturas: somaAssin, itensAssin: assin,
+           total: valorParc + somaAssin };
+}
+function comprasNoMes(nomeCartao, mes){
+  const fim = (function(){ const d=new Date(mes); d.setMonth(d.getMonth()+1); return mesRef(d); })();
+  return dados.eventos.filter(e=>e.forma==="cartao" && e.cartao===nomeCartao && e.data>=mes && e.data<fim)
+                      .reduce((a,e)=>a+ (e.tipo==="gasto" ? +e.valor : -e.valor),0);
+}
+function cartoesVisiveis(){ return filtra(dados.cartoes); }
+
 function resumo(){
   const mes=mesRef();
   const saldos=filtra(dados.saldos);
   const caixa = saldos.filter(s=>s.tipo!=="a_receber").reduce((a,s)=>a+ +s.valor,0);
   const receber = saldos.filter(s=>s.tipo==="a_receber").reduce((a,s)=>a+ +s.valor,0);
   const contas=filtra(dados.contas);
-  const custoFixo = contas.reduce((a,c)=>a+ +c.valor,0);
+  const custoFixo = contas.reduce((a,c)=>a+custoMensal(c),0);
   const parc=filtra(dados.parcelas);
   const divida = parc.filter(p=>!p.pago).reduce((a,p)=>a+ +p.valor,0);
   const faturaMes = parc.filter(p=>p.mes_ref===mes).reduce((a,p)=>a+ +p.valor,0);
@@ -510,9 +563,15 @@ function resumo(){
   const gastoMes = evs.filter(e=>e.tipo==="gasto").reduce((a,e)=>a+ +e.valor,0);
   const entradaMes = evs.filter(e=>e.tipo==="entrada").reduce((a,e)=>a+ +e.valor,0);
   const pagosIds = new Set(dados.pagos.map(p=>p.conta_fixa_id));
-  const faltaFixo = contas.filter(c=>!pagosIds.has(c.id)).reduce((a,c)=>a+ +c.valor,0);
+  const doBanco = contas.filter(c=>!c.cartao && cobraNesteMes(c,mes));
+  const noCartao = contas.filter(c=>c.cartao && cobraNesteMes(c,mes));
+  const faltaBanco = doBanco.filter(c=>!pagosIds.has(c.id)).reduce((a,c)=>a+ +c.valor,0);
+  let faltaFaturas = 0;
+  cartoesVisiveis().forEach(c=>{ const f=fatura(c.nome,mes); if(!f.pago) faltaFaturas += f.total; });
+  const faltaTotal = faltaBanco + faltaFaturas;
   const meses = custoFixo>0 ? caixa/custoFixo : 0;
-  return {caixa,receber,custoFixo,divida,faturaMes,faturaAberta,faturaProx,proxMes,gastoMes,entradaMes,faltaFixo,meses,pagosIds};
+  return {caixa,receber,custoFixo,divida,faturaMes,faturaAberta,faturaProx,proxMes,gastoMes,entradaMes,
+          faltaBanco,faltaFaturas,faltaTotal,doBanco,noCartao,meses,pagosIds};
 }
 
 /* ---------------- pintar ---------------- */
@@ -531,20 +590,21 @@ function pintar(){
       <div class="v ${r.caixa>0?"good":"bad"}">${brl(r.caixa)}</div>
       <div class="n">${r.receber>0? "mais "+brl(r.receber)+" a receber" : "nada a receber registrado"}</div>
     </div>
+    <div class="card full ${r.faltaTotal>0?"tap":""}" id="cardFalta">
+      <div class="k">AINDA FALTA PAGAR EM ${nomeMes(mesRef()).toUpperCase()}</div>
+      <div class="v ${r.faltaTotal===0?"good":r.faltaTotal>r.caixa?"bad":"warn"}">${brl(r.faltaTotal)}</div>
+      <div class="n">${r.faltaTotal===0 ? "tudo quitado neste mês"
+        : brl(r.faltaBanco)+" em contas do banco · "+brl(r.faltaFaturas)+" em faturas de cartão"}</div></div>
     <div class="card"><div class="k">CUSTO FIXO DO MÊS</div>
       <div class="v sm">${brl(r.custoFixo)}</div>
-      <div class="n">${r.faltaFixo>0? "falta pagar "+brl(r.faltaFixo) : "tudo pago"}</div></div>
+      <div class="n">tudo que se repete, anuais já divididas por 12</div></div>
     <div class="card"><div class="k">CAIXA AGUENTA</div>
       <div class="v sm ${r.meses>=6?"good":r.meses>=3?"warn":"bad"}">${r.custoFixo>0? r.meses.toFixed(1).replace(".",",")+" meses" : "—"}</div>
       <div class="n">só com custo fixo, sem entrar nada</div></div>
-    <div class="card"><div class="k">CARTÕES, DÍVIDA RESTANTE</div>
-      <div class="v sm ${r.divida>50000?"bad":r.divida>0?"warn":"good"}">${brl(r.divida)}</div>
-      <div class="n">até a última parcela</div></div>
-    <div class="card"><div class="k">FATURA A PAGAR</div>
-      <div class="v sm ${r.faturaAberta===0?"good":""}">${r.faturaAberta>0? brl(r.faturaAberta) : brl(r.faturaProx)}</div>
-      <div class="n">${r.faturaAberta>0
-        ? "vence em "+nomeMes(mesRef())
-        : (nomeMes(mesRef())+" já paga · próxima em "+nomeMes(r.proxMes))}</div></div>
+    <div class="card full tap" id="cardCartoes">
+      <div class="k">CARTÕES, DÍVIDA RESTANTE</div>
+      <div class="v ${r.divida>50000?"bad":r.divida>0?"warn":"good"}">${brl(r.divida)}</div>
+      <div class="n">até a última parcela · toque para ver cartão por cartão</div></div>
     <div class="card"><div class="k">SAIU ESTE MÊS</div>
       <div class="v sm">${brl(r.gastoMes)}</div><div class="n">lançamentos de vocês dois</div></div>
     <div class="card"><div class="k">ENTROU ESTE MÊS</div>
@@ -560,20 +620,36 @@ function pintar(){
     : '<div class="empty">Nenhuma conta nesta lente.</div>';
   $("#saldos").querySelectorAll("[data-saldo]").forEach(el=>el.onclick=()=>abrirSaldo(+el.dataset.saldo));
 
-  const contas=filtra(dados.contas);
-  $("#contas").innerHTML = contas.length ? contas.map(c=>{
+  $("#contas").innerHTML = r.doBanco.length ? r.doBanco.map(c=>{
     const pago=r.pagosIds.has(c.id);
     return `<div class="row" data-conta="${c.id}">
       <div class="ic">${c.dia}</div>
       <div class="mid tap" data-edit="${c.id}"><div class="t">${c.descricao}</div>
-        <div class="s">dia ${c.dia} · ${rotulo(c.frente)}</div></div>
+        <div class="s">dia ${c.dia} · ${rotulo(c.frente)}${c.periodicidade==="anual"?" · anual":""}</div></div>
       <div class="amt">${brl(c.valor)}</div>
       <div class="chk ${pago?"on":""}"></div></div>`;
-  }).join("") : '<div class="empty">Nenhuma conta fixa nesta lente.</div>';
+  }).join("") : '<div class="empty">Nada sai do banco nesta lente neste mês.</div>';
   $("#contas").querySelectorAll("[data-conta]").forEach(row=>{
     row.querySelector(".chk").onclick=()=>marcarConta(+row.dataset.conta,row.querySelector(".chk"));
     const ed=row.querySelector("[data-edit]"); if(ed) ed.onclick=()=>abrirConta(+ed.dataset.edit);
   });
+
+  const porCartao={};
+  r.noCartao.forEach(c=>{ (porCartao[c.cartao]=porCartao[c.cartao]||[]).push(c); });
+  const nomesCartao=Object.keys(porCartao).sort();
+  $("#contasCartao").innerHTML = nomesCartao.length ? nomesCartao.map(nc=>{
+    const itens=porCartao[nc];
+    const soma=itens.reduce((a,c)=>a+ +c.valor,0);
+    return `<div class="row"><div class="mid"><div class="t">${nc}</div>
+        <div class="s">${itens.length} ${itens.length===1?"assinatura":"assinaturas"} · entram na fatura</div></div>
+      <div class="amt">${brl(soma)}</div></div>`
+      + itens.map(c=>`<div class="row tap" data-edit2="${c.id}" style="padding-left:28px">
+          <div class="ic" style="width:26px;height:26px;font-size:11px">${c.dia}</div>
+          <div class="mid"><div class="t" style="font-size:14px">${c.descricao}</div>
+            <div class="s">${rotulo(c.frente)}${c.periodicidade==="anual"?" · anual, cobra em "+["jan","fev","mar","abr","mai","jun","jul","ago","set","out","nov","dez"][(+c.mes_venc||1)-1]:""}</div></div>
+          <div class="amt" style="font-size:14px">${brl(c.valor)}</div></div>`).join("");
+  }).join("") : '<div class="empty">Nenhuma assinatura em cartão nesta lente neste mês.</div>';
+  $("#contasCartao").querySelectorAll("[data-edit2]").forEach(el=>el.onclick=()=>abrirConta(+el.dataset.edit2));
 
   const evs=filtra(dados.eventos).slice(0,25);
   $("#eventos").innerHTML = evs.length ? evs.map(e=>{
@@ -586,17 +662,85 @@ function pintar(){
   }).join("") : '<div class="empty">Nada lançado ainda. Toque em Lançar.</div>';
   $("#eventos").querySelectorAll("[data-ev]").forEach(el=>el.onclick=()=>abrirFolha(el.dataset.ev));
 
-  const parc=filtra(dados.parcelas).filter(p=>+p.valor>0&&!p.pago);
-  const porMes={}; parc.forEach(p=>{ porMes[p.mes_ref]=(porMes[p.mes_ref]||0)+ +p.valor; });
-  const meses=Object.keys(porMes).sort(); const maior=Math.max(1,...meses.map(m=>porMes[m]));
-  $("#cartoes").innerHTML = meses.length ? meses.map(m=>`
-    <div class="row"><div class="mid"><div class="t">${nomeMes(m)}</div>
-      <div class="bar"><i style="width:${(porMes[m]/maior*100).toFixed(1)}%"></i></div></div>
-      <div class="amt">${brl0(porMes[m])}</div></div>`).join("")
-    : '<div class="empty">Sem parcelas em aberto nesta lente.</div>';
+  const mes=mesRef();
+  const cds=cartoesVisiveis();
+  $("#cartoes").innerHTML = cds.length ? cds.map(c=>{
+    const f=fatura(c.nome,mes);
+    const restante=dados.parcelas.filter(p=>p.cartao===c.nome&&!p.pago).reduce((a,p)=>a+ +p.valor,0);
+    const compras=comprasNoMes(c.nome,mes);
+    return `<div class="row tap" data-cartao="${c.nome}">
+      <div class="ic">${c.dia_venc}</div>
+      <div class="mid"><div class="t">${c.nome}</div>
+        <div class="s">${f.pago? "fatura de "+nomeMes(mes)+" paga" : "fatura "+brl(f.total)+" · vence dia "+c.dia_venc}${compras>0?" · "+brl(compras)+" lançados":""}</div></div>
+      <div class="amt ${f.pago?"in":""}">${brl0(restante)}</div></div>`;
+  }).join("") : '<div class="empty">Nenhum cartão nesta lente.</div>';
+  $("#cartoes").querySelectorAll("[data-cartao]").forEach(el=>el.onclick=()=>abrirCartoes(el.dataset.cartao));
 
+  const elC=$("#cardCartoes"); if(elC) elC.onclick=()=>abrirCartoes(null);
   $("#rodape").textContent = (eu&&eu.papel==="dono"?"Você vê as três frentes.":"Você vê o casal e a confeitaria.")+" Toque em qualquer linha para editar.";
 }
+
+/* ---------------- folha dos cartões ---------------- */
+let cartaoAberto=null;
+function abrirCartoes(nome){
+  cartaoAberto = nome || cartaoAberto;
+  pintarCartoes();
+  $("#sheetCartoes").classList.remove("hide");
+}
+function pintarCartoes(){
+  const mes=mesRef();
+  const cds=cartoesVisiveis();
+  const totalRest=cds.reduce((a,c)=>a+dados.parcelas.filter(p=>p.cartao===c.nome&&!p.pago).reduce((x,p)=>x+ +p.valor,0),0);
+  const totalFat=cds.reduce((a,c)=>{ const f=fatura(c.nome,mes); return a+(f.pago?0:f.total); },0);
+  $("#cdResumo").innerHTML = "Faltam <b>"+brl(totalFat)+"</b> em faturas neste mês. A dívida total, até a última parcela de todos, é de <b>"+brl(totalRest)+"</b>.";
+  $("#cdLista").innerHTML = cds.map(c=>{
+    const f=fatura(c.nome,mes);
+    const compras=comprasNoMes(c.nome,mes);
+    const restante=dados.parcelas.filter(p=>p.cartao===c.nome&&!p.pago).reduce((a,p)=>a+ +p.valor,0);
+    const aberto = cartaoAberto===c.nome;
+    const futuros=dados.parcelas.filter(p=>p.cartao===c.nome && p.mes_ref>mes && +p.valor>0);
+    const maior=Math.max(1,...futuros.map(p=>+p.valor));
+    return `<div class="list" style="margin-bottom:10px">
+      <div class="row tap" data-abrir="${c.nome}">
+        <div class="mid"><div class="t">${c.nome}</div>
+          <div class="s">vence dia ${c.dia_venc}${c.limite?" · limite "+brl0(c.limite):""} · ${rotulo(c.frente)}</div></div>
+        <div class="amt ${f.pago?"in":""}">${f.pago?"paga":brl(f.total)}</div></div>
+      ${aberto ? `
+        <div class="row"><div class="mid"><div class="t" style="font-size:14px">Parcelas de ${nomeMes(mes)}</div></div>
+          <div class="amt" style="font-size:14px">${brl(f.parcelas)}</div></div>
+        <div class="row"><div class="mid"><div class="t" style="font-size:14px">Assinaturas neste cartão</div>
+          <div class="s">${f.itensAssin.length? f.itensAssin.map(i=>i.descricao.replace("Assinatura ","")).join(", ") : "nenhuma"}</div></div>
+          <div class="amt" style="font-size:14px">${brl(f.assinaturas)}</div></div>
+        <div class="row"><div class="mid"><div class="t" style="font-size:14px">Compras lançadas por vocês em ${nomeMes(mes)}</div>
+          <div class="s">entram nesta fatura ou na próxima, conforme o fechamento</div></div>
+          <div class="amt" style="font-size:14px">${brl(compras)}</div></div>
+        <div class="row"><div class="mid"><div class="t">Fatura de ${nomeMes(mes)}</div></div>
+          <div class="amt">${brl(f.total)}</div>
+          ${f.parcelaId? `<button class="chip ${f.pago?"on":""}" data-pagar="${f.parcelaId}">${f.pago?"paga":"marcar paga"}</button>`:""}</div>
+        <div class="row"><div class="mid"><div class="t" style="font-size:14px">Ainda deve, até a última parcela</div></div>
+          <div class="amt" style="font-size:14px">${brl(restante)}</div></div>
+        ${futuros.map(p=>`<div class="row" style="padding-left:28px">
+            <div class="mid"><div class="t" style="font-size:13px;color:var(--ink2)">${nomeMes(p.mes_ref)}</div>
+              <div class="bar"><i style="width:${(+p.valor/maior*100).toFixed(1)}%"></i></div></div>
+            <div class="amt" style="font-size:13px">${brl0(p.valor)}</div></div>`).join("")}
+      ` : ""}
+    </div>`;
+  }).join("");
+  $("#cdLista").querySelectorAll("[data-abrir]").forEach(el=>el.onclick=()=>{
+    cartaoAberto = (cartaoAberto===el.dataset.abrir) ? null : el.dataset.abrir; pintarCartoes();
+  });
+  $("#cdLista").querySelectorAll("[data-pagar]").forEach(el=>el.onclick=async(ev)=>{
+    ev.stopPropagation();
+    const id=+el.dataset.pagar;
+    const p=dados.parcelas.find(x=>x.id===id);
+    try{
+      await rest("parcela_futura?id=eq."+id,{method:"PATCH",headers:{Prefer:"return=minimal"},body:JSON.stringify({pago:!p.pago})});
+      p.pago=!p.pago; pintarCartoes(); pintar();
+      toast(p.pago?"Fatura marcada como paga.":"Fatura voltou para em aberto.");
+    }catch(e){ toast(e.message,true); }
+  });
+}
+$("#cdFechar").onclick=()=>$("#sheetCartoes").classList.add("hide");
 
 async function marcarConta(id,el){
   const mes=mesRef(), jaPago=el.classList.contains("on");
@@ -797,19 +941,34 @@ $("#cSalvar").onclick = async ()=>{
 };
 
 /* ---------------- conta fixa ---------------- */
+const MESES=["janeiro","fevereiro","março","abril","maio","junho","julho","agosto","setembro","outubro","novembro","dezembro"];
 function abrirConta(id){
   const c = id ? dados.contas.find(x=>x.id===id) : null;
-  contaEd={id:c?c.id:null, frente:c?c.frente:(lente==="tudo"?"casa":lente)};
+  contaEd={id:c?c.id:null, frente:c?c.frente:(lente==="tudo"?"casa":lente),
+           cartao:c?(c.cartao||null):null, periodicidade:c?(c.periodicidade||"mensal"):"mensal"};
   $("#ctTitulo").textContent = c ? "Editar conta fixa" : "Nova conta fixa";
   $("#ctDesc").value = c?c.descricao:""; $("#ctValor").value = c?num(c.valor):"";
   $("#ctDia").value = c?c.dia:"10"; $("#ctMsg").innerHTML="";
+  $("#ctMes").innerHTML = MESES.map((m,i)=>'<option value="'+(i+1)+'">'+m+'</option>').join("");
+  $("#ctMes").value = c && c.mes_venc ? c.mes_venc : String(new Date().getMonth()+1);
   $("#ctExcluir").classList.toggle("hide", !c);
-  pintarCtFrentes(); $("#sheetConta").classList.remove("hide");
+  pintarCtFrentes(); pintarCtPago(); pintarCtPeriodo(); $("#sheetConta").classList.remove("hide");
 }
 function pintarCtFrentes(){
   $("#ctFrentes").innerHTML = FRENTES.filter(f=>f.id!=="tudo" && (f.id!=="consultorio" || (eu&&eu.papel==="dono")))
     .map(f=>'<button class="chip'+(contaEd.frente===f.id?" on":"")+'" data-f="'+f.id+'">'+f.nome+'</button>').join("");
   $("#ctFrentes").querySelectorAll("[data-f]").forEach(b=>b.onclick=()=>{ contaEd.frente=b.dataset.f; pintarCtFrentes(); });
+}
+function pintarCtPago(){
+  const opts = [{id:"",nome:"Sai do banco"}].concat(cartoesVisiveis().map(c=>({id:c.nome,nome:c.nome})));
+  $("#ctPagoPor").innerHTML = opts.map(o=>'<button class="chip'+(((contaEd.cartao||"")===o.id)?" on":"")+'" data-p="'+o.id+'">'+o.nome+'</button>').join("");
+  $("#ctPagoPor").querySelectorAll("[data-p]").forEach(b=>b.onclick=()=>{ contaEd.cartao=b.dataset.p||null; pintarCtPago(); });
+}
+function pintarCtPeriodo(){
+  $("#ctPeriodo").innerHTML = [{id:"mensal",nome:"Todo mês"},{id:"anual",nome:"Uma vez por ano"}]
+    .map(o=>'<button class="chip'+(contaEd.periodicidade===o.id?" on":"")+'" data-pe="'+o.id+'">'+o.nome+'</button>').join("");
+  $("#ctPeriodo").querySelectorAll("[data-pe]").forEach(b=>b.onclick=()=>{ contaEd.periodicidade=b.dataset.pe; pintarCtPeriodo(); });
+  $("#ctMesBox").classList.toggle("hide", contaEd.periodicidade!=="anual");
 }
 $("#addConta").onclick=()=>abrirConta(null);
 $("#ctCancelar").onclick=()=>$("#sheetConta").classList.add("hide");
@@ -818,7 +977,9 @@ $("#ctSalvar").onclick = async ()=>{
   if(!desc){ $("#ctMsg").innerHTML='<div class="msg err">Dê um nome para a conta.</div>'; return; }
   if(!(valor>=0)){ $("#ctMsg").innerHTML='<div class="msg err">Valor inválido.</div>'; return; }
   if(!(dia>=1&&dia<=31)){ $("#ctMsg").innerHTML='<div class="msg err">O dia precisa ser de 1 a 31.</div>'; return; }
-  const corpo={descricao:desc,valor:+valor.toFixed(2),dia,frente:contaEd.frente};
+  const corpo={descricao:desc,valor:+valor.toFixed(2),dia,frente:contaEd.frente,
+               cartao:contaEd.cartao||null, periodicidade:contaEd.periodicidade,
+               mes_venc: contaEd.periodicidade==="anual" ? +$("#ctMes").value : null};
   try{
     if(contaEd.id) await rest("conta_fixa?id=eq."+contaEd.id,{method:"PATCH",headers:{Prefer:"return=minimal"},body:JSON.stringify(corpo)});
     else { corpo.casal_id=await meuCasal(); await rest("conta_fixa",{method:"POST",headers:{Prefer:"return=minimal"},body:JSON.stringify(corpo)}); }

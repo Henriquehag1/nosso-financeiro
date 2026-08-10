@@ -305,6 +305,22 @@ select.inp{appearance:none;background-image:linear-gradient(45deg,transparent 50
     <div class="chips" id="sdTipos"></div>
     <div class="lbl">De qual frente</div>
     <div class="chips" id="sdFrentes"></div>
+
+    <div id="sdCaiuBox" class="hide">
+      <div class="destino" style="margin-top:20px">
+        <b>Caiu dinheiro desta conta?</b><br>
+        Isto tira do "a receber" e põe na conta que você escolher, na mesma hora. Nada é contado duas vezes.
+      </div>
+      <div class="two" style="margin-top:12px">
+        <div><div class="lbl" style="margin-top:0">Saiu do a receber</div><input class="inp" id="sdCaiuSaiu" inputmode="decimal" placeholder="0,00"></div>
+        <div><div class="lbl" style="margin-top:0">Caiu na conta</div><input class="inp" id="sdCaiuEntrou" inputmode="decimal" placeholder="0,00"></div>
+      </div>
+      <div class="lbl">Foi para onde</div>
+      <select class="inp" id="sdCaiuDestino"></select>
+      <div style="height:12px"></div>
+      <button class="btn ghost" id="sdCaiu">Registrar que caiu</button>
+    </div>
+
     <div id="sdMsg"></div>
     <div style="height:20px"></div>
     <button class="btn" id="sdSalvar">Salvar</button>
@@ -487,13 +503,16 @@ function resumo(){
   const parc=filtra(dados.parcelas);
   const divida = parc.filter(p=>!p.pago).reduce((a,p)=>a+ +p.valor,0);
   const faturaMes = parc.filter(p=>p.mes_ref===mes).reduce((a,p)=>a+ +p.valor,0);
+  const faturaAberta = parc.filter(p=>p.mes_ref===mes&&!p.pago).reduce((a,p)=>a+ +p.valor,0);
+  const proxMes = (function(){ const d=new Date(); d.setMonth(d.getMonth()+1); return mesRef(d); })();
+  const faturaProx = parc.filter(p=>p.mes_ref===proxMes).reduce((a,p)=>a+ +p.valor,0);
   const evs = filtra(dados.eventos).filter(e=>e.data>=mes);
   const gastoMes = evs.filter(e=>e.tipo==="gasto").reduce((a,e)=>a+ +e.valor,0);
   const entradaMes = evs.filter(e=>e.tipo==="entrada").reduce((a,e)=>a+ +e.valor,0);
   const pagosIds = new Set(dados.pagos.map(p=>p.conta_fixa_id));
   const faltaFixo = contas.filter(c=>!pagosIds.has(c.id)).reduce((a,c)=>a+ +c.valor,0);
   const meses = custoFixo>0 ? caixa/custoFixo : 0;
-  return {caixa,receber,custoFixo,divida,faturaMes,gastoMes,entradaMes,faltaFixo,meses,pagosIds};
+  return {caixa,receber,custoFixo,divida,faturaMes,faturaAberta,faturaProx,proxMes,gastoMes,entradaMes,faltaFixo,meses,pagosIds};
 }
 
 /* ---------------- pintar ---------------- */
@@ -521,8 +540,11 @@ function pintar(){
     <div class="card"><div class="k">CARTÕES, DÍVIDA RESTANTE</div>
       <div class="v sm ${r.divida>50000?"bad":r.divida>0?"warn":"good"}">${brl(r.divida)}</div>
       <div class="n">até a última parcela</div></div>
-    <div class="card"><div class="k">FATURA DESTE MÊS</div>
-      <div class="v sm">${brl(r.faturaMes)}</div><div class="n">${nomeMes(mesRef())}</div></div>
+    <div class="card"><div class="k">FATURA A PAGAR</div>
+      <div class="v sm ${r.faturaAberta===0?"good":""}">${r.faturaAberta>0? brl(r.faturaAberta) : brl(r.faturaProx)}</div>
+      <div class="n">${r.faturaAberta>0
+        ? "vence em "+nomeMes(mesRef())
+        : (nomeMes(mesRef())+" já paga · próxima em "+nomeMes(r.proxMes))}</div></div>
     <div class="card"><div class="k">SAIU ESTE MÊS</div>
       <div class="v sm">${brl(r.gastoMes)}</div><div class="n">lançamentos de vocês dois</div></div>
     <div class="card"><div class="k">ENTROU ESTE MÊS</div>
@@ -818,9 +840,40 @@ function abrirSaldo(id){
   $("#sdTitulo").textContent = s ? "Atualizar saldo" : "Nova conta";
   $("#sdNome").value=s?s.nome:""; $("#sdValor").value=s?num(s.valor):""; $("#sdMsg").innerHTML="";
   $("#sdExcluir").classList.toggle("hide", !s);
-  pintarSdTipos(); pintarSdFrentes(); $("#sheetSaldo").classList.remove("hide");
+  pintarSdTipos(); pintarSdFrentes(); pintarCaiu(s); $("#sheetSaldo").classList.remove("hide");
   if(s) setTimeout(()=>{ $("#sdValor").focus(); $("#sdValor").select(); },120);
 }
+function pintarCaiu(s){
+  const box=$("#sdCaiuBox");
+  if(!s || s.tipo!=="a_receber"){ box.classList.add("hide"); return; }
+  box.classList.remove("hide");
+  $("#sdCaiuSaiu").value=""; $("#sdCaiuEntrou").value="";
+  const destinos = dados.saldos.filter(x=>x.tipo!=="a_receber");
+  $("#sdCaiuDestino").innerHTML = destinos.map(d=>'<option value="'+d.id+'">'+d.nome+'</option>').join("");
+  const mesmaFrente = destinos.find(d=>d.frente===s.frente);
+  if(mesmaFrente) $("#sdCaiuDestino").value=mesmaFrente.id;
+  $("#sdCaiuSaiu").oninput=()=>{ $("#sdCaiuEntrou").value=$("#sdCaiuSaiu").value; };
+}
+$("#sdCaiu").onclick = async ()=>{
+  const origem=dados.saldos.find(x=>x.id===saldoEd.id);
+  const destino=dados.saldos.find(x=>x.id===+$("#sdCaiuDestino").value);
+  const saiu=parseNum($("#sdCaiuSaiu").value);
+  const entrou=parseNum($("#sdCaiuEntrou").value);
+  if(!origem||!destino){ $("#sdMsg").innerHTML='<div class="msg err">Escolha para onde o dinheiro foi.</div>'; return; }
+  if(!(saiu>0)||!(entrou>0)){ $("#sdMsg").innerHTML='<div class="msg err">Preencha os dois valores.</div>'; return; }
+  if(saiu > +origem.valor + 0.005){ $("#sdMsg").innerHTML='<div class="msg err">O a receber tem só '+brl(origem.valor)+'. Ajuste o valor.</div>'; return; }
+  $("#sdCaiu").textContent="Registrando...";
+  try{
+    await rest("conta_saldo?id=eq."+origem.id,{method:"PATCH",headers:{Prefer:"return=minimal"},
+      body:JSON.stringify({valor:+(+origem.valor - saiu).toFixed(2), atualizado_em:new Date().toISOString()})});
+    await rest("conta_saldo?id=eq."+destino.id,{method:"PATCH",headers:{Prefer:"return=minimal"},
+      body:JSON.stringify({valor:+(+destino.valor + entrou).toFixed(2), atualizado_em:new Date().toISOString()})});
+    $("#sheetSaldo").classList.add("hide");
+    toast(brl(entrou)+" caiu em "+destino.nome+".");
+    await carregar();
+  }catch(e){ $("#sdMsg").innerHTML='<div class="msg err">'+e.message+'</div>'; }
+  finally{ $("#sdCaiu").textContent="Registrar que caiu"; }
+};
 function pintarSdTipos(){
   $("#sdTipos").innerHTML = TIPOS_SALDO.map(t=>'<button class="chip'+(saldoEd.tipo===t.id?" on":"")+'" data-t="'+t.id+'">'+t.nome+'</button>').join("");
   $("#sdTipos").querySelectorAll("[data-t]").forEach(b=>b.onclick=()=>{ saldoEd.tipo=b.dataset.t; pintarSdTipos(); });

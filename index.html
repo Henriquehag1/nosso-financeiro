@@ -339,6 +339,25 @@ select.inp{appearance:none;background-image:linear-gradient(45deg,transparent 50
   </div>
 </div>
 
+<!-- ================= TETO DA CATEGORIA ================= -->
+<div class="sheet hide" id="sheetTeto">
+  <div class="panel">
+    <div class="handle"></div>
+    <h3 id="tetoTitulo">Teto do mês</h3>
+    <p style="color:var(--ink2);font-size:14px;margin:0 0 12px">
+      Quanto vocês querem, no máximo, gastar por mês nesta categoria. Serve para o que varia, tipo mercado e comer fora. O que é fixo já tem valor conhecido e não precisa de teto.</p>
+    <div class="lbl" style="margin-top:0">Teto por mês</div>
+    <input class="inp" id="tetoValor" inputmode="decimal" placeholder="0,00">
+    <div id="tetoMsg"></div>
+    <div style="height:20px"></div>
+    <button class="btn" id="tetoSalvar">Salvar teto</button>
+    <div style="height:10px"></div>
+    <button class="btn ghost" id="tetoZerar">Tirar o teto</button>
+    <div style="height:10px"></div>
+    <button class="btn ghost" id="tetoCancelar">Cancelar</button>
+  </div>
+</div>
+
 <!-- ================= FECHAR O MÊS ================= -->
 <div class="sheet hide" id="sheetLote">
   <div class="panel" style="max-height:100vh;min-height:80vh">
@@ -409,7 +428,7 @@ select.inp{appearance:none;background-image:linear-gradient(45deg,transparent 50
    A chave abaixo e publica de proposito: ela sozinha nao le nada.
    Quem decide o que cada pessoa enxerga e o proprio banco (RLS).
    ============================================================ */
-const VERSAO = "9";
+const VERSAO = "10";
 const SB  = "https://oihyhyyhessqnpkknhsi.supabase.co";
 const KEY = "sb_publishable_T7LERNVYS8mAK0tOlWfl5A_4-yCUjie";
 const LS_SESS = "nf.sessao", LS_FILA = "nf.fila", LS_CASAL = "nf.casal";
@@ -538,7 +557,7 @@ async function carregar(){
   try{
     const [membro,cat,contas,parcelas,saldos,eventos,pagos,cartoes] = await Promise.all([
       rest("membro?select=user_id,nome,papel,casal_id"),
-      rest("categoria?select=id,pai,filho,tipo,frentes,ativo&ativo=is.true&order=pai.asc,filho.asc"),
+      rest("categoria?select=id,pai,filho,tipo,frentes,ativo,teto&ativo=is.true&order=pai.asc,filho.asc"),
       rest("conta_fixa?select=id,descricao,valor,dia,frente,cartao,periodicidade,mes_venc&ativo=is.true&order=dia.asc"),
       rest("parcela_futura?select=id,cartao,mes_ref,valor,frente,pago&order=mes_ref.asc"),
       rest("conta_saldo?select=id,nome,frente,tipo,valor&order=valor.desc"),
@@ -725,14 +744,14 @@ function pintar(){
       <div class="v ${r.divida>50000?"bad":r.divida>0?"warn":"good"}">${brl(r.divida)}</div>
       <div class="n">at\u00e9 a \u00faltima parcela \u00b7 ${brl(r.faltaFaturas)} em faturas abertas agora</div></div>
 
-    <div class="card full abre" data-p="assinaturas">
+    <div class="card full abre" data-p="fixos">
       <div class="k">CUSTO FIXO DO M\u00caS</div>
       <div class="v sm">${brl(r.custoFixo)}</div>
-      <div class="n">tudo que se repete, anuais divididas por 12 \u00b7 ${r.noCartao.length} assinaturas em cart\u00e3o</div></div>
+      <div class="n">tudo que se repete: moradia, consult\u00f3rio, confeitaria e assinaturas</div></div>
 
-    <div class="card"><div class="k">SAIU ESTE M\u00caS</div>
+    <div class="card abre" data-p="tetos"><div class="k">SAIU ESTE M\u00caS</div>
       <div class="v sm">${brl(r.gastoMes)}</div>
-      <div class="n">o que voc\u00eas lan\u00e7aram</div></div>
+      <div class="n">o que voc\u00eas lan\u00e7aram \u00b7 tetos por categoria</div></div>
 
     <div class="card"><div class="k">ENTROU ESTE M\u00caS</div>
       <div class="v sm good">${brl(r.entradaMes)}</div>
@@ -778,68 +797,166 @@ function pintarExtrato(){
 
 /* ---------------- portas: listas em folha ---------------- */
 function abrirLista(qual){
-  const r=resumo(), mes=mesRef();
-  const add=$("#slAdd");
+  const r=resumo(), mes=mesRef(), add=$("#slAdd");
+  const diaHoje=new Date().getDate();
+  add.textContent=""; add.onclick=null;
+
+  /* ---------- contas do mes: pago e a pagar, junto ---------- */
   if(qual==="contas"){
-    $("#slTitulo").textContent="Contas do m\u00eas";
-    $("#slNota").textContent="S\u00f3 o que sai do banco. O que \u00e9 pago no cart\u00e3o est\u00e1 em Assinaturas e entra na fatura.";
-    add.textContent="+ nova"; add.onclick=()=>{ fecharSheet("#sheetLista"); abrirConta(null); };
-    $("#slConteudo").innerHTML = '<div class="list">' + (r.doBanco.length ? r.doBanco.map(c=>{
-      const pago=r.pagosIds.has(c.id);
-      return `<div class="row" data-conta="${c.id}">
-        <div class="ic">${c.dia}</div>
-        <div class="mid tap" data-edit="${c.id}"><div class="t">${c.descricao}</div>
-          <div class="s">dia ${c.dia} \u00b7 ${rotulo(c.frente)}${c.periodicidade==="anual"?" \u00b7 anual":""}</div></div>
-        <div class="amt">${brl(c.valor)}</div>
-        <div class="chk ${pago?"on":""}"></div></div>`;
-    }).join("") : '<div class="empty">Nada sai do banco nesta lente neste m\u00eas.</div>') + '</div>';
-    $("#slConteudo").querySelectorAll("[data-conta]").forEach(row=>{
-      row.querySelector(".chk").onclick=()=>{ marcarConta(+row.dataset.conta,row.querySelector(".chk")); };
-      const ed=row.querySelector("[data-edit]"); if(ed) ed.onclick=()=>{ fecharSheet("#sheetLista"); abrirConta(+ed.dataset.edit); };
+    const itens=[];
+    r.doBanco.forEach(c=>itens.push({k:"c",id:c.id,nome:c.descricao,dia:c.dia,
+      valor:+c.valor,pago:r.pagosIds.has(c.id),frente:c.frente,detalhe:rotulo(c.frente)}));
+    cartoesVisiveis().forEach(cd=>{
+      const f=fatura(cd.nome,mes);
+      if(f.total>0 || f.parcelaId) itens.push({k:"f",id:f.parcelaId,nome:"Fatura "+cd.nome,
+        dia:cd.dia_venc,valor:f.total,pago:f.pago,frente:cd.frente,
+        detalhe:"parcelas "+brl0(f.parcelas)+" mais assinaturas "+brl0(f.assinaturas)});
+    });
+    const falta=itens.filter(i=>!i.pago).sort((a,b)=>a.dia-b.dia);
+    const pagos=itens.filter(i=>i.pago).sort((a,b)=>a.dia-b.dia);
+    const somaFalta=falta.reduce((a,i)=>a+i.valor,0), somaPago=pagos.reduce((a,i)=>a+i.valor,0);
+    $("#slTitulo").textContent="Contas de "+nomeMes(mes);
+    $("#slNota").innerHTML="Falta pagar <b style='color:var(--warn)'>"+brl(somaFalta)+"</b>. "
+      +"Já pago <b style='color:var(--good)'>"+brl(somaPago)+"</b>. Toque no quadradinho para marcar.";
+    add.textContent="+ conta fixa"; add.onclick=()=>{ fecharSheet("#sheetLista"); abrirConta(null); };
+
+    const linha=(i)=>{
+      const atrasada = !i.pago && i.dia < diaHoje;
+      const perto = !i.pago && !atrasada && (i.dia - diaHoje) <= 3;
+      const sinal = i.pago ? "" : (atrasada ? '<span style="color:var(--bad);font-weight:700">!</span> ' :
+                                   perto ? '<span style="color:var(--warn);font-weight:700">!</span> ' : "");
+      const quando = i.pago ? "pago" : (atrasada ? "venceu dia "+i.dia : "vence dia "+i.dia);
+      const cor = i.pago ? "var(--good)" : (atrasada ? "var(--bad)" : perto ? "var(--warn)" : "var(--ink3)");
+      return '<div class="row" data-item="'+i.k+':'+i.id+'">'
+        + '<div class="ic">'+i.dia+'</div>'
+        + '<div class="mid'+(i.k==="c"?' tap" data-edit="'+i.id:'"')+'"><div class="t">'+sinal+i.nome+'</div>'
+        + '<div class="s" style="color:'+cor+'">'+quando+' · '+i.detalhe+'</div></div>'
+        + '<div class="amt">'+brl(i.valor)+'</div>'
+        + '<div class="chk '+(i.pago?"on":"")+'"></div></div>';
+    };
+    $("#slConteudo").innerHTML =
+      (falta.length ? '<div class="sechead" style="margin:4px 0 8px"><h2 class="sec" style="color:var(--warn)">Falta pagar</h2>'
+        +'<span class="add" style="color:var(--ink3)">'+brl(somaFalta)+'</span></div><div class="list">'
+        + falta.map(linha).join("") + '</div>' : '<div class="empty">Tudo pago neste mês.</div>')
+      + (pagos.length ? '<div class="sechead"><h2 class="sec" style="color:var(--good)">Já pago</h2>'
+        +'<span class="add" style="color:var(--ink3)">'+brl(somaPago)+'</span></div><div class="list">'
+        + pagos.map(linha).join("") + '</div>' : "");
+
+    $("#slConteudo").querySelectorAll("[data-item]").forEach(row=>{
+      const [k,id]=row.dataset.item.split(":");
+      row.querySelector(".chk").onclick=async()=>{
+        if(k==="c") await marcarConta(+id,row.querySelector(".chk"));
+        else await marcarFatura(+id,row.querySelector(".chk"));
+        abrirLista("contas");
+      };
+      const ed=row.querySelector("[data-edit]");
+      if(ed) ed.onclick=()=>{ fecharSheet("#sheetLista"); abrirConta(+ed.dataset.edit); };
     });
   }
-  if(qual==="saldos"){
-    const sal=filtra(dados.saldos);
-    $("#slTitulo").textContent="Onde est\u00e1 o dinheiro";
-    $("#slNota").textContent="Toque para atualizar o saldo. Nas linhas de a receber d\u00e1 para registrar quando o dinheiro cai.";
-    add.textContent="+ conta"; add.onclick=()=>{ fecharSheet("#sheetLista"); abrirSaldo(null); };
-    $("#slConteudo").innerHTML = '<div class="list">' + (sal.length ? sal.map(s=>`
-      <div class="row tap" data-saldo="${s.id}">
-        <div class="ic">${s.tipo==="reserva"?"\u25c8":s.tipo==="especie"?"\u25ce":s.tipo==="a_receber"?"\u2192":"\u25a2"}</div>
-        <div class="mid"><div class="t">${s.nome}</div>
-          <div class="s">${(TIPOS_SALDO.find(t=>t.id===s.tipo)||{}).nome} \u00b7 ${rotulo(s.frente)}</div></div>
-        <div class="amt">${brl(s.valor)}</div></div>`).join("")
-      : '<div class="empty">Nenhuma conta nesta lente.</div>') + '</div>';
-    $("#slConteudo").querySelectorAll("[data-saldo]").forEach(el=>el.onclick=()=>{
-      fecharSheet("#sheetLista"); abrirSaldo(+el.dataset.saldo);
+
+  /* ---------- custo fixo: tudo que se repete ---------- */
+  if(qual==="fixos"){
+    const contas=filtra(dados.contas);
+    const grupos={};
+    contas.forEach(c=>{ const g=c.cartao||"Sai do banco"; (grupos[g]=grupos[g]||[]).push(c); });
+    const nomes=Object.keys(grupos).sort((a,b)=> a==="Sai do banco"?-1 : b==="Sai do banco"?1 : a.localeCompare(b));
+    const totalMes=contas.reduce((a,c)=>a+custoMensal(c),0);
+    $("#slTitulo").textContent="Custo fixo do mês";
+    $("#slNota").innerHTML="Tudo que se repete todo mês: <b>"+brl(totalMes)+"</b>. "
+      +"As anuais entram divididas por 12. Toque em qualquer linha para editar.";
+    add.textContent="+ nova"; add.onclick=()=>{ fecharSheet("#sheetLista"); abrirConta(null); };
+    $("#slConteudo").innerHTML = nomes.map(g=>{
+      const itens=grupos[g].slice().sort((a,b)=>a.dia-b.dia);
+      const soma=itens.reduce((a,c)=>a+custoMensal(c),0);
+      return '<div class="sechead" style="margin:14px 0 8px"><h2 class="sec">'+g+'</h2>'
+        + '<span class="add" style="color:var(--ink3)">'+brl(soma)+' por mês</span></div>'
+        + '<div class="list">' + itens.map(c=>
+            '<div class="row tap" data-edit3="'+c.id+'">'
+            + '<div class="ic">'+c.dia+'</div>'
+            + '<div class="mid"><div class="t">'+c.descricao.replace("Assinatura ","")+'</div>'
+            + '<div class="s">'+rotulo(c.frente)
+              + (c.periodicidade==="anual" ? " · anual em "+MES3[(+c.mes_venc||1)-1]+", "+brl(custoMensal(c))+" por mês" : "")
+              + (c.cartao ? " · entra na fatura" : "") + '</div></div>'
+            + '<div class="amt">'+brl(c.valor)+'</div></div>').join("")
+        + '</div>';
+    }).join("") || '<div class="empty">Nenhum custo fixo nesta lente.</div>';
+    $("#slConteudo").querySelectorAll("[data-edit3]").forEach(el=>el.onclick=()=>{
+      fecharSheet("#sheetLista"); abrirConta(+el.dataset.edit3);
     });
   }
-  if(qual==="assinaturas"){
-    const porCartao={};
-    r.noCartao.forEach(c=>{ (porCartao[c.cartao]=porCartao[c.cartao]||[]).push(c); });
-    const nomes=Object.keys(porCartao).sort();
-    $("#slTitulo").textContent="Assinaturas";
-    $("#slNota").textContent="Estas j\u00e1 est\u00e3o dentro da fatura do cart\u00e3o. N\u00e3o pague \u00e0 parte.";
-    add.textContent="+ nova"; add.onclick=()=>{ fecharSheet("#sheetLista"); abrirConta(null); };
-    $("#slConteudo").innerHTML = nomes.length ? nomes.map(nc=>{
-      const itens=porCartao[nc], soma=itens.reduce((a,c)=>a+ +c.valor,0);
-      return `<div class="list" style="margin-bottom:10px">
-        <div class="row"><div class="mid"><div class="t">${nc}</div>
-          <div class="s">${itens.length} ${itens.length===1?"assinatura":"assinaturas"} neste m\u00eas</div></div>
-          <div class="amt">${brl(soma)}</div></div>`
-        + itens.map(c=>`<div class="row tap" data-edit2="${c.id}">
-            <div class="ic" style="width:26px;height:26px;font-size:11px">${c.dia}</div>
-            <div class="mid"><div class="t" style="font-size:14px">${c.descricao.replace("Assinatura ","")}</div>
-              <div class="s">${rotulo(c.frente)}${c.periodicidade==="anual"?" \u00b7 anual, cobra em "+MES3[(+c.mes_venc||1)-1]:""}</div></div>
-            <div class="amt" style="font-size:14px">${brl(c.valor)}</div></div>`).join("")
-        + `</div>`;
-    }).join("") : '<div class="empty">Nenhuma assinatura em cart\u00e3o nesta lente neste m\u00eas.</div>';
-    $("#slConteudo").querySelectorAll("[data-edit2]").forEach(el=>el.onclick=()=>{
-      fecharSheet("#sheetLista"); abrirConta(+el.dataset.edit2);
+
+  /* ---------- tetos do que varia ---------- */
+  if(qual==="tetos"){
+    const gasto=gastoPorCategoria(mes);
+    const cats=dados.cat.filter(c=>c.tipo==="gasto")
+      .filter(c=>frentesPermitidas(c).length>0)
+      .filter(c=> lente==="tudo" ? true : frentesPermitidas(c).includes(lente))
+      .map(c=>({c, g:gasto[c.id]||0, t:+c.teto||0}))
+      .filter(x=> x.g>0 || x.t>0)
+      .sort((a,b)=> (b.t?1:0)-(a.t?1:0) || b.g-a.g);
+    const somaTeto=cats.reduce((a,x)=>a+x.t,0), somaGasto=cats.reduce((a,x)=>a+x.g,0);
+    $("#slTitulo").textContent="Gasto do mês por categoria";
+    $("#slNota").innerHTML = somaTeto>0
+      ? "Gastaram <b>"+brl(somaGasto)+"</b> de <b>"+brl(somaTeto)+"</b> em tetos definidos. Toque para mudar um teto."
+      : "Aqui entra o que varia: mercado, comer fora, transporte, lazer. Toque numa categoria para definir quanto querem gastar, no máximo, por mês.";
+    $("#slConteudo").innerHTML = '<div class="list">' + (cats.length ? cats.map(x=>{
+      const pct = x.t>0 ? Math.min(100, x.g/x.t*100) : 0;
+      const cor = x.t===0 ? "var(--ink3)" : x.g>x.t ? "var(--bad)" : x.g>x.t*0.8 ? "var(--warn)" : "var(--good)";
+      return '<div class="row tap" data-teto="'+x.c.id+'">'
+        + '<div class="mid"><div class="t">'+nomeCat(x.c)+'</div>'
+        + (x.t>0 ? '<div class="bar"><i style="width:'+pct.toFixed(0)+'%;background:'+cor+'"></i></div>'
+                 : '<div class="s">sem teto definido</div>')
+        + '</div>'
+        + '<div class="amt" style="color:'+cor+'">'+brl(x.g)+(x.t>0? '<div class="s" style="text-align:right;font-weight:400">de '+brl0(x.t)+'</div>':'')+'</div></div>';
+    }).join("") : '<div class="empty">Nada lançado ainda neste mês.</div>') + '</div>';
+    $("#slConteudo").querySelectorAll("[data-teto]").forEach(el=>el.onclick=()=>{
+      fecharSheet("#sheetLista"); abrirTeto(+el.dataset.teto);
     });
   }
   abrirSheet("#sheetLista");
 }
+
+async function marcarFatura(parcelaId, el){
+  const p=dados.parcelas.find(x=>x.id===parcelaId); if(!p) return;
+  el.classList.toggle("on");
+  try{
+    await rest("parcela_futura?id=eq."+parcelaId,{method:"PATCH",headers:{Prefer:"return=minimal"},
+      body:JSON.stringify({pago:!p.pago})});
+    p.pago=!p.pago; pintar();
+  }catch(e){ el.classList.toggle("on"); toast("Não consegui marcar: "+e.message,true); }
+}
+
+function gastoPorCategoria(mes){
+  const fim=mesSeguinte(mes), map={};
+  filtra(dados.eventos).filter(e=>e.tipo==="gasto" && e.data>=mes && e.data<fim)
+    .forEach(e=>{ map[e.categoria_id]=(map[e.categoria_id]||0)+ +e.valor; });
+  return map;
+}
+
+let tetoEd=null;
+function abrirTeto(catId){
+  const c=dados.cat.find(x=>x.id===catId); if(!c) return;
+  tetoEd=catId;
+  $("#tetoTitulo").textContent=nomeCat(c);
+  $("#tetoValor").value = +c.teto>0 ? num(c.teto) : "";
+  $("#tetoMsg").innerHTML="";
+  abrirSheet("#sheetTeto");
+  setTimeout(()=>{ $("#tetoValor").focus(); },120);
+}
+async function salvarTeto(valor){
+  try{
+    await rest("categoria?id=eq."+tetoEd,{method:"PATCH",headers:{Prefer:"return=minimal"},
+      body:JSON.stringify({teto:valor})});
+    const c=dados.cat.find(x=>x.id===tetoEd); if(c) c.teto=valor;
+    fecharSheet("#sheetTeto"); toast(valor>0?"Teto definido.":"Teto removido."); abrirLista("tetos");
+  }catch(e){ $("#tetoMsg").innerHTML='<div class="msg err">'+e.message+'</div>'; }
+}
+$("#tetoSalvar").onclick=()=>{ const v=parseNum($("#tetoValor").value);
+  if(!(v>0)){ $("#tetoMsg").innerHTML='<div class="msg err">Escreva um valor maior que zero.</div>'; return; }
+  salvarTeto(+v.toFixed(2)); };
+$("#tetoZerar").onclick=()=>salvarTeto(0);
+$("#tetoCancelar").onclick=()=>fecharSheet("#sheetTeto");
+
 $("#slFechar").onclick=()=>fecharSheet("#sheetLista");
 
 /* ---------------- fechar o mês ---------------- */

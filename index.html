@@ -97,7 +97,12 @@ body.travada .dock{display:none}
 .card .n{font-size:12px;color:var(--ink3);margin-top:4px}
 .v.good{color:var(--good)} .v.warn{color:var(--warn)} .v.bad{color:var(--bad)}
 .bar{height:6px;border-radius:999px;background:var(--surface2);margin-top:10px;overflow:hidden}
-.bar>i{display:block;height:100%;background:var(--blue)}
+.bar>i{display:block;height:100%;background:var(--blue);transition:width .3s}
+.barra{height:9px;border-radius:999px;background:var(--surface2);margin-top:7px;overflow:hidden;position:relative}
+.barra>i{display:block;height:100%;border-radius:999px}
+.tetoRow .t{font-size:14px}
+.tetoRow .r{font-size:13px;font-weight:600;white-space:nowrap;text-align:right;min-width:96px}
+.tetoRow .r small{display:block;font-weight:400;font-size:11px;color:var(--ink3)}
 
 .sechead{display:flex;align-items:baseline;justify-content:space-between;margin:26px 0 10px}
 h2.sec{font-size:13px;text-transform:uppercase;letter-spacing:.08em;color:var(--ink3);margin:0;font-weight:600}
@@ -219,6 +224,9 @@ select.inp{appearance:none;background-image:linear-gradient(45deg,transparent 50
     <div class="grid" id="cards"></div>
     <p class="selo" id="selo" style="text-align:center;margin:12px 0 0"></p>
 
+    <div class="sechead" id="tetoHead"><h2 class="sec">Quanto ainda dá para gastar</h2><span class="add" id="tetoAbrir">ajustar</span></div>
+    <div class="list" id="tetosBarras"></div>
+
     <div class="sechead"><h2 class="sec">Entradas e saídas</h2><span class="add" style="color:var(--ink3)">toque para editar</span></div>
     <div class="list" id="eventos"></div>
 
@@ -262,6 +270,10 @@ select.inp{appearance:none;background-image:linear-gradient(45deg,transparent 50
 
     <div class="lbl">Como pagou</div>
     <div class="chips" id="fFormas"></div>
+
+    <div class="lbl">Em quantas vezes</div>
+    <div class="chips" id="fParcelas"></div>
+    <div id="fParcelaNota" class="destino hide"></div>
 
     <div id="fCartaoBox" class="hide">
       <div class="lbl">Qual cartão</div>
@@ -442,7 +454,7 @@ select.inp{appearance:none;background-image:linear-gradient(45deg,transparent 50
    A chave abaixo e publica de proposito: ela sozinha nao le nada.
    Quem decide o que cada pessoa enxerga e o proprio banco (RLS).
    ============================================================ */
-const VERSAO = "11";
+const VERSAO = "12";
 const SB  = "https://oihyhyyhessqnpkknhsi.supabase.co";
 const KEY = "sb_publishable_T7LERNVYS8mAK0tOlWfl5A_4-yCUjie";
 const LS_SESS = "nf.sessao", LS_FILA = "nf.fila", LS_CASAL = "nf.casal";
@@ -462,7 +474,7 @@ const TIPOS_SALDO = [
 
 let sessao=null, eu=null, lente="tudo";
 let dados={cat:[],contas:[],parcelas:[],saldos:[],eventos:[],pagos:[],cartoes:[],cartoesLista:[]};
-let form={id:null,tipo:"gasto",catId:null,frente:null,forma:"pix",cartao:null};
+let form={id:null,tipo:"gasto",catId:null,frente:null,forma:"pix",cartao:null,parcelas:1};
 let contaEd={id:null,frente:"casa"};
 let saldoEd={id:null,frente:"casa",tipo:"conta"};
 
@@ -575,7 +587,7 @@ async function carregar(){
       rest("conta_fixa?select=id,descricao,valor,dia,frente,cartao,periodicidade,mes_venc&ativo=is.true&order=dia.asc"),
       rest("parcela_futura?select=id,cartao,mes_ref,valor,frente,pago&order=mes_ref.asc"),
       rest("conta_saldo?select=id,nome,frente,tipo,valor&order=valor.desc"),
-      rest("evento?select=id,data,valor,tipo,frente,descricao,forma,cartao,categoria_id,origem,obs,criado_por&order=data.desc,criado_em.desc&limit=150"),
+      rest("evento?select=id,data,valor,tipo,frente,descricao,forma,cartao,categoria_id,origem,obs,criado_por,parcelas,parcela_num,grupo&order=data.desc,criado_em.desc&limit=150"),
       rest("pagamento_conta?select=conta_fixa_id,mes_ref,valor&mes_ref=eq."+mes),
       rest("cartao?select=id,nome,dia_venc,limite,frente&ativo=is.true&order=nome.asc")
     ]);
@@ -627,7 +639,8 @@ function mesSeguinte(mes){
 }
 function comprasNoMes(nomeCartao, mes){
   const fim = mesSeguinte(mes);
-  return dados.eventos.filter(e=>e.forma==="cartao" && e.cartao===nomeCartao && e.data>=mes && e.data<fim)
+  return dados.eventos.filter(e=>e.forma==="cartao" && e.cartao===nomeCartao && e.data>=mes && e.data<fim
+                                 && (e.parcelas||1)===1)
                       .reduce((a,e)=>a+ (e.tipo==="gasto" ? +e.valor : -e.valor),0);
 }
 function cartoesVisiveis(){ return filtra(dados.cartoes); }
@@ -782,12 +795,48 @@ function pintar(){
   });
   $("#selo").textContent = selo();
 
+  pintarTetos(r);
   pintarExtrato();
   $("#rodape").textContent = (eu&&eu.papel==="dono"?"Você vê as três frentes.":"Você vê o casal e a confeitaria.")
     +" Cards com seta abrem a lista. Versão "+VERSAO+".";
   const bf=$("#btnFecharMes");
   if(bf) bf.classList.toggle("hide", !emFechamento);
 }
+
+
+/* ---------------- barras de teto ---------------- */
+function pintarTetos(r){
+  const mes=mesRef(), gasto=gastoPorCategoria(mes);
+  const cats=dados.cat.filter(c=>c.tipo==="gasto" && +c.teto>0)
+    .filter(c=>frentesPermitidas(c).length>0)
+    .filter(c=> lente==="tudo" ? true : frentesPermitidas(c).includes(lente))
+    .map(c=>({c, g:gasto[c.id]||0, t:+c.teto}))
+    .sort((a,b)=> (b.g/b.t) - (a.g/a.t));
+  const somaT=cats.reduce((a,x)=>a+x.t,0), somaG=cats.reduce((a,x)=>a+x.g,0);
+  const head=$("#tetoHead"), lista=$("#tetosBarras");
+  if(!cats.length){ head.classList.add("hide"); lista.classList.add("hide"); return; }
+  head.classList.remove("hide"); lista.classList.remove("hide");
+  head.querySelector(".sec").textContent = "Quanto ainda dá para gastar em "+nomeMes(mes);
+  const sobra=somaT-somaG;
+  lista.innerHTML =
+    '<div class="row"><div class="mid"><div class="t" style="font-weight:600">Sobra dos tetos</div>'
+    + '<div class="barra"><i style="width:'+Math.min(100,somaG/somaT*100).toFixed(0)+'%;background:'
+      + (somaG>somaT?"var(--bad)":somaG>somaT*0.8?"var(--warn)":"var(--good)")+'"></i></div></div>'
+    + '<div class="r" style="font-size:15px;font-weight:700;color:'+(sobra<0?"var(--bad)":"var(--ink)")+'">'
+      + brl(sobra)+'<small>de '+brl0(somaT)+'</small></div></div>'
+    + cats.map(x=>{
+        const resta=x.t-x.g, pct=Math.min(100, x.g/x.t*100);
+        const cor = x.g>x.t ? "var(--bad)" : x.g>x.t*0.8 ? "var(--warn)" : "var(--good)";
+        return '<div class="row tetoRow tap" data-tt="'+x.c.id+'">'
+          + '<div class="mid"><div class="t">'+nomeCat(x.c)+'</div>'
+          + '<div class="barra"><i style="width:'+pct.toFixed(0)+'%;background:'+cor+'"></i></div></div>'
+          + '<div class="r" style="color:'+(resta<0?"var(--bad)":"var(--ink2)")+'">'
+            + (resta<0? "passou "+brl0(-resta) : brl0(resta))
+            + '<small>'+brl0(x.g)+' de '+brl0(x.t)+'</small></div></div>';
+      }).join("");
+  lista.querySelectorAll("[data-tt]").forEach(el=>el.onclick=()=>abrirTeto(+el.dataset.tt));
+}
+$("#tetoAbrir").onclick=()=>abrirLista("tetos");
 
 /* ---------------- extrato ---------------- */
 function nomeDe(uid){
@@ -803,7 +852,7 @@ function pintarExtrato(){
     return `<div class="row tap" data-ev="${e.id}">
       <div class="ic">${e.tipo==="entrada"?"\u2193":"\u2191"}</div>
       <div class="mid"><div class="t">${e.descricao||nomeCat(c)}</div>
-        <div class="s">${d[2]}/${d[1]} \u00b7 ${nomeCat(c)} \u00b7 ${rotulo(e.frente)}${e.cartao?" \u00b7 "+e.cartao:""}${quem?" \u00b7 "+quem:""}${voz?" \u00b7 voz":""}</div></div>
+        <div class="s">${d[2]}/${d[1]} \u00b7 ${nomeCat(c)} \u00b7 ${rotulo(e.frente)}${e.cartao?" \u00b7 "+e.cartao:""}${(e.parcelas||1)>1?" \u00b7 "+e.parcela_num+"/"+e.parcelas:""}${quem?" \u00b7 "+quem:""}${voz?" \u00b7 voz":""}</div></div>
       <div class="amt ${e.tipo==="entrada"?"in":"out"}">${e.tipo==="entrada"?"+":"\u2212"}${num(e.valor)}</div></div>`;
   }).join("") : '<div class="empty">Nada lan\u00e7ado ainda. Toque em Lan\u00e7ar.</div>';
   $("#eventos").querySelectorAll("[data-ev]").forEach(el=>el.onclick=()=>abrirFolha(el.dataset.ev));
@@ -1136,14 +1185,14 @@ function recentes(){
 function abrirFolha(evId){
   const ev = evId ? dados.eventos.find(x=>x.id===evId) : null;
   if(ev){
-    form={id:ev.id,tipo:ev.tipo,catId:ev.categoria_id,frente:ev.frente,forma:ev.forma||"pix",cartao:ev.cartao};
+    form={id:ev.id,tipo:ev.tipo,catId:ev.categoria_id,frente:ev.frente,forma:ev.forma||"pix",cartao:ev.cartao,parcelas:1};
     $("#sheetTitulo").textContent="Editar lançamento";
     $("#fValor").value=num(ev.valor); $("#fDesc").value=ev.descricao||""; $("#fData").value=ev.data;
     $("#fSalvar").textContent="Salvar alterações";
     $("#fExcluir").classList.toggle("hide", ev.origem!=="manual");
     $("#fRecentesBox").classList.add("hide");
   }else{
-    form={id:null,tipo:"gasto",catId:null,frente:null,forma:"pix",cartao:null};
+    form={id:null,tipo:"gasto",catId:null,frente:null,forma:"pix",cartao:null,parcelas:1};
     $("#sheetTitulo").textContent="Novo lançamento";
     $("#fValor").value=""; $("#fDesc").value=""; $("#fData").value=hojeISO();
     $("#fSalvar").textContent="Salvar lançamento";
@@ -1206,6 +1255,31 @@ function pintarFormas(){
     $("#fCartao").onchange=()=>{ form.cartao=$("#fCartao").value; };
   } else { box.classList.add("hide"); form.cartao=null; }
 }
+
+const OPC_PARC=[1,2,3,4,5,6,10,12,18];
+function pintarParcelas(){
+  const box=$("#fParcelas");
+  const editando = !!form.id;
+  $("#fParcelas").parentElement; // no-op
+  if(editando){ box.parentElement && box.classList.add("hide"); }
+  else box.classList.remove("hide");
+  box.innerHTML = OPC_PARC.map(n=>'<button class="chip'+(form.parcelas===n?" on":"")+'" data-pc="'+n+'">'+(n===1?"À vista":n+"x")+'</button>').join("");
+  box.querySelectorAll("[data-pc]").forEach(b=>b.onclick=()=>{ form.parcelas=+b.dataset.pc; pintarParcelas(); pintarDestino(); });
+  notaParcela();
+}
+function notaParcela(){
+  const el=$("#fParcelaNota");
+  const total=parseNum($("#fValor").value);
+  if(form.parcelas<=1 || !(total>0)){ el.classList.add("hide"); return; }
+  el.classList.remove("hide");
+  const p=total/form.parcelas;
+  const fim=(function(){ let m=mesRef(new Date($("#fData").value+"T12:00:00")); for(let i=1;i<form.parcelas;i++) m=mesSeguinte(m); return m; })();
+  el.innerHTML = 'Vou gravar <b>'+form.parcelas+' parcelas de '+brl(p)+'</b>, uma por mês, indo até <b>'+nomeMes(fim)+'</b>. '
+    + (form.forma==="cartao"
+        ? 'Cada parcela entra na fatura do <b>'+(form.cartao||"cartão")+'</b> do mês certo e soma na dívida do cartão.'
+        : 'Cada parcela entra como saída no mês dela.');
+}
+
 function pintarDestino(){
   const c=dados.cat.find(x=>x.id===form.catId);
   if(!c){ $("#fDestino").innerHTML='Escolha a categoria e eu digo onde isto vai ser registrado.'; return; }
@@ -1219,6 +1293,8 @@ function pintarDestino(){
 $("#segTipo").querySelectorAll("button").forEach(b=>b.onclick=()=>{
   form.tipo=b.dataset.tipo; form.catId=null; form.frente=null; segTipo(); pintarCats(); pintarDestino();
 });
+$("#fValor").addEventListener("input",notaParcela);
+$("#fData").addEventListener("change",notaParcela);
 $("#btnLancar").onclick=()=>abrirFolha(null);
 $("#btnFecharMes").onclick=abrirLote;
 $("#fCancelar").onclick=()=>fecharSheet("#sheet");
@@ -1245,9 +1321,38 @@ $("#fSalvar").onclick = async ()=>{
       await rest("evento?id=eq."+form.id,{method:"PATCH",headers:{Prefer:"return=minimal"},body:JSON.stringify(corpo)});
       toast("Lançamento atualizado.");
     }else{
-      corpo.casal_id=await meuCasal(); corpo.origem="manual";
-      await rest("evento",{method:"POST",headers:{Prefer:"return=minimal"},body:JSON.stringify(corpo)});
-      toast("Lançado.");
+      const casal=await meuCasal();
+      const n=Math.max(1, form.parcelas||1);
+      if(n===1){
+        corpo.casal_id=casal; corpo.origem="manual";
+        await rest("evento",{method:"POST",headers:{Prefer:"return=minimal"},body:JSON.stringify(corpo)});
+        toast("Lançado.");
+      }else{
+        /* Parcelamento: uma linha por mes, ligadas pelo mesmo grupo.
+           Se for no cartao, as parcelas tambem entram na projecao dele. */
+        const grupo=(crypto.randomUUID?crypto.randomUUID():String(Date.now())+Math.random());
+        const parcela=+(valor/n).toFixed(2);
+        const sobra=+(valor - parcela*n).toFixed(2);
+        const base=corpo.data;
+        const linhas=[];
+        for(let i=0;i<n;i++){
+          const d=new Date(base+"T12:00:00"); d.setMonth(d.getMonth()+i);
+          const dia=String(Math.min(d.getDate(), new Date(d.getFullYear(), d.getMonth()+1, 0).getDate())).padStart(2,"0");
+          linhas.push(Object.assign({}, corpo, {
+            casal_id:casal, origem:"manual", grupo:grupo, parcelas:n, parcela_num:i+1,
+            valor: i===0 ? +(parcela+sobra).toFixed(2) : parcela,
+            data: d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+dia,
+            descricao: (corpo.descricao||nomeCat(dados.cat.find(x=>x.id===form.catId)))+" "+(i+1)+"/"+n
+          }));
+        }
+        await rest("evento",{method:"POST",headers:{Prefer:"return=minimal"},body:JSON.stringify(linhas)});
+        if(form.forma==="cartao" && form.cartao){
+          await api("/rest/v1/rpc/somar_parcelas",{method:"POST",body:JSON.stringify({
+            p_cartao:form.cartao, p_mes:mesRef(new Date(base+"T12:00:00")), p_n:n,
+            p_valor:parcela, p_frente:corpo.frente })});
+        }
+        toast(n+" parcelas de "+brl(parcela)+" lançadas.");
+      }
     }
     fecharSheet("#sheet"); await carregar();
   }catch(e){

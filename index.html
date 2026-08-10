@@ -4,47 +4,52 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1">
 <meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<meta name="apple-mobile-web-app-title" content="Nosso Financeiro">
-<meta name="theme-color" content="#1a1a19">
+<meta name="apple-mobile-web-app-title" content="Financeiro">
+<meta name="theme-color" content="#151513">
 <title>Nosso Financeiro</title>
-<link rel="apple-touch-icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 180 180'%3E%3Crect width='180' height='180' rx='40' fill='%231a1a19'/%3E%3Ctext x='90' y='118' font-size='84' font-family='Georgia,serif' fill='%23fcfcfb' text-anchor='middle'%3ENF%3C/text%3E%3C/svg%3E">
+<link rel="manifest" href="manifest.json">
+<link rel="apple-touch-icon" href="icon-180.png">
+<link rel="apple-touch-icon" sizes="180x180" href="icon-180.png">
+<link rel="icon" type="image/png" sizes="192x192" href="icon-192.png">
+<link rel="icon" type="image/png" sizes="512x512" href="icon-512.png">
 <style>
 :root{
-  --bg:#111110; --surface:#1c1c1a; --surface2:#262623; --line:#33332f;
-  --ink:#fcfcfb; --ink2:#a8a89f; --ink3:#75756d;
-  --good:#3fbf3f; --warn:#fab219; --bad:#e05b5b; --blue:#5b9bea; --gold:#c9a227;
+  --bg:#151513; --surface:#1e1e1b; --surface2:#282824; --line:#37372f;
+  --ink:#f6f3ea; --ink2:#a8a89f; --ink3:#76766d;
+  --good:#4cbf58; --warn:#e5a92b; --bad:#e06a5f; --blue:#5b9bea; --gold:#c9a227;
   --safe-top:env(safe-area-inset-top); --safe-bot:env(safe-area-inset-bottom);
 }
 *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
 html,body{margin:0;padding:0;background:var(--bg);color:var(--ink);
   font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
   font-size:16px;line-height:1.45;-webkit-font-smoothing:antialiased}
-body{padding-top:var(--safe-top);padding-bottom:calc(84px + var(--safe-bot))}
+body{padding-top:var(--safe-top);padding-bottom:calc(88px + var(--safe-bot))}
 button,input,select,textarea{font:inherit;color:inherit}
 button{background:none;border:0;cursor:pointer}
 .hide{display:none !important}
 .wrap{max-width:640px;margin:0 auto;padding:0 16px}
 
-/* ---------- login ---------- */
 #login{min-height:100vh;display:flex;flex-direction:column;justify-content:center;padding:24px}
+#login .marca{width:64px;height:64px;margin-bottom:18px;border-radius:16px}
 #login h1{font-family:Georgia,serif;font-weight:400;font-size:32px;margin:0 0 4px}
-#login p.sub{color:var(--ink2);margin:0 0 28px;font-size:15px}
+#login p.sub{color:var(--ink2);margin:0 0 26px;font-size:15px}
 .field{margin-bottom:14px}
 .field label{display:block;font-size:13px;color:var(--ink2);margin-bottom:6px}
 .field input{width:100%;padding:14px;border-radius:12px;border:1px solid var(--line);
   background:var(--surface);color:var(--ink);font-size:17px}
 .field input:focus{outline:none;border-color:var(--blue)}
-.btn{display:block;width:100%;padding:15px;border-radius:12px;background:var(--ink);color:#111110;
+.btn{display:block;width:100%;padding:15px;border-radius:12px;background:var(--ink);color:#151513;
   font-weight:600;font-size:16px;text-align:center}
 .btn.ghost{background:transparent;color:var(--ink2);font-weight:400;border:1px solid var(--line)}
+.btn.danger{background:transparent;color:var(--bad);border:1px solid var(--line)}
 .btn:active{opacity:.75}
 .msg{font-size:14px;padding:12px;border-radius:10px;margin-bottom:14px}
-.msg.err{background:rgba(224,91,91,.15);color:#ffb0b0}
-.msg.ok{background:rgba(63,191,63,.14);color:#a9e8a9}
+.msg.err{background:rgba(224,106,95,.15);color:#ffb6ae}
+.msg.ok{background:rgba(76,191,88,.14);color:#a9e8a9}
 .msg.info{background:var(--surface2);color:var(--ink2)}
 
-/* ---------- topo ---------- */
 header{padding:14px 0 8px}
 .hrow{display:flex;align-items:center;justify-content:space-between;gap:12px}
 .hrow h1{font-family:Georgia,serif;font-weight:400;font-size:22px;margin:0}
@@ -53,9 +58,8 @@ header{padding:14px 0 8px}
 .lentes::-webkit-scrollbar{display:none}
 .lente{white-space:nowrap;padding:8px 14px;border-radius:999px;border:1px solid var(--line);
   background:var(--surface);color:var(--ink2);font-size:14px}
-.lente.on{background:var(--ink);color:#111110;border-color:var(--ink);font-weight:600}
+.lente.on{background:var(--ink);color:#151513;border-color:var(--ink);font-weight:600}
 
-/* ---------- cards ---------- */
 .grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:6px}
 .card{background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:14px}
 .card.full{grid-column:1/-1}
@@ -67,13 +71,14 @@ header{padding:14px 0 8px}
 .bar{height:6px;border-radius:999px;background:var(--surface2);margin-top:10px;overflow:hidden}
 .bar>i{display:block;height:100%;background:var(--blue)}
 
-h2.sec{font-size:13px;text-transform:uppercase;letter-spacing:.08em;color:var(--ink3);
-  margin:26px 0 10px;font-weight:600}
+.sechead{display:flex;align-items:baseline;justify-content:space-between;margin:26px 0 10px}
+h2.sec{font-size:13px;text-transform:uppercase;letter-spacing:.08em;color:var(--ink3);margin:0;font-weight:600}
+.add{font-size:13px;color:var(--blue)}
 .list{background:var(--surface);border:1px solid var(--line);border-radius:16px;overflow:hidden}
 .row{display:flex;align-items:center;gap:12px;padding:13px 14px;border-bottom:1px solid var(--line)}
 .row:last-child{border-bottom:0}
 .row .ic{width:34px;height:34px;border-radius:10px;background:var(--surface2);flex:0 0 auto;
-  display:flex;align-items:center;justify-content:center;font-size:15px}
+  display:flex;align-items:center;justify-content:center;font-size:14px;color:var(--ink2)}
 .row .mid{flex:1;min-width:0}
 .row .t{font-size:15px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .row .s{font-size:12px;color:var(--ink3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -82,19 +87,19 @@ h2.sec{font-size:13px;text-transform:uppercase;letter-spacing:.08em;color:var(--
 .chk{width:26px;height:26px;border-radius:8px;border:1.5px solid var(--line);flex:0 0 auto}
 .chk.on{background:var(--good);border-color:var(--good);position:relative}
 .chk.on::after{content:"";position:absolute;left:9px;top:4px;width:5px;height:11px;
-  border:solid #111110;border-width:0 2.5px 2.5px 0;transform:rotate(45deg)}
+  border:solid #151513;border-width:0 2.5px 2.5px 0;transform:rotate(45deg)}
 .empty{padding:22px 14px;color:var(--ink3);font-size:14px;text-align:center}
+.tap{cursor:pointer}
+.tap:active{background:var(--surface2)}
 
-/* ---------- barra inferior ---------- */
 .dock{position:fixed;left:0;right:0;bottom:0;background:linear-gradient(to top,var(--bg) 62%,transparent);
   padding:10px 16px calc(12px + var(--safe-bot));z-index:40}
 .dock .inner{max-width:640px;margin:0 auto;display:flex;gap:10px}
-.dock .lancar{flex:1;padding:16px;border-radius:14px;background:var(--ink);color:#111110;
+.dock .lancar{flex:1;padding:16px;border-radius:14px;background:var(--ink);color:#151513;
   font-weight:700;font-size:16px;text-align:center}
 .dock .alt{padding:16px 18px;border-radius:14px;background:var(--surface);border:1px solid var(--line);
   color:var(--ink2);font-size:15px}
 
-/* ---------- folha de lançamento ---------- */
 .sheet{position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:60;display:flex;align-items:flex-end;
   backdrop-filter:blur(2px)}
 .sheet .panel{width:100%;max-height:94vh;overflow-y:auto;background:var(--bg);
@@ -105,7 +110,6 @@ h2.sec{font-size:13px;text-transform:uppercase;letter-spacing:.08em;color:var(--
 .seg{display:flex;background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:4px;gap:4px}
 .seg button{flex:1;padding:11px;border-radius:9px;font-size:15px;color:var(--ink2)}
 .seg button.on{background:var(--surface2);color:var(--ink);font-weight:600}
-.seg button.on.out{color:var(--ink)}
 .seg button.on.in{color:var(--good)}
 .valor{width:100%;padding:16px;border-radius:14px;border:1px solid var(--line);background:var(--surface);
   font-size:34px;font-weight:600;text-align:center;letter-spacing:-.02em}
@@ -113,8 +117,9 @@ h2.sec{font-size:13px;text-transform:uppercase;letter-spacing:.08em;color:var(--
 .chips{display:flex;flex-wrap:wrap;gap:7px}
 .chip{padding:9px 13px;border-radius:999px;border:1px solid var(--line);background:var(--surface);
   font-size:14px;color:var(--ink2)}
-.chip.on{background:var(--ink);color:#111110;border-color:var(--ink);font-weight:600}
+.chip.on{background:var(--ink);color:#151513;border-color:var(--ink);font-weight:600}
 .chip.add{border-style:dashed;color:var(--ink3)}
+.chip.rec{border-color:var(--gold);color:var(--ink)}
 .lbl{font-size:12px;color:var(--ink2);margin:18px 0 8px;letter-spacing:.02em}
 .inp{width:100%;padding:13px;border-radius:12px;border:1px solid var(--line);background:var(--surface);font-size:16px}
 .inp:focus{outline:none;border-color:var(--blue)}
@@ -125,11 +130,11 @@ select.inp{appearance:none;background-image:linear-gradient(45deg,transparent 50
   border:1px solid var(--line);font-size:14px;color:var(--ink2)}
 .destino b{color:var(--ink);font-weight:600}
 .two{display:flex;gap:10px}.two>*{flex:1}
-.fila{position:fixed;left:16px;right:16px;bottom:calc(92px + var(--safe-bot));z-index:50;
-  background:var(--warn);color:#111110;border-radius:12px;padding:11px 14px;font-size:13px;font-weight:600;
+.fila{position:fixed;left:16px;right:16px;bottom:calc(96px + var(--safe-bot));z-index:50;
+  background:var(--warn);color:#151513;border-radius:12px;padding:11px 14px;font-size:13px;font-weight:600;
   max-width:608px;margin:0 auto}
-.toast{position:fixed;left:16px;right:16px;bottom:calc(92px + var(--safe-bot));z-index:70;
-  background:var(--good);color:#111110;border-radius:12px;padding:13px 15px;font-size:14px;font-weight:600;
+.toast{position:fixed;left:16px;right:16px;bottom:calc(96px + var(--safe-bot));z-index:70;
+  background:var(--good);color:#151513;border-radius:12px;padding:13px 15px;font-size:14px;font-weight:600;
   max-width:608px;margin:0 auto;text-align:center}
 .toast.err{background:var(--bad);color:#fff}
 </style>
@@ -139,12 +144,13 @@ select.inp{appearance:none;background-image:linear-gradient(45deg,transparent 50
 <!-- ================= LOGIN ================= -->
 <section id="login">
   <div class="wrap" style="padding:0">
+    <img class="marca" src="icon-192.png" alt="">
     <h1>Nosso Financeiro</h1>
-    <p class="sub" id="loginSub">Entre com o seu e-mail e senha.</p>
+    <p class="sub">Entre com o seu e-mail e senha.</p>
     <div id="loginMsg"></div>
     <form id="loginForm" method="post" action="#">
       <div class="field"><label for="email">E-mail</label>
-        <input id="email" name="username" type="email" autocomplete="username webauthn" inputmode="email" autocapitalize="none" spellcheck="false" required></div>
+        <input id="email" name="username" type="email" autocomplete="username" inputmode="email" autocapitalize="none" spellcheck="false" required></div>
       <div class="field"><label for="senha">Senha</label>
         <input id="senha" name="password" type="password" autocomplete="current-password" required></div>
       <button class="btn" id="btnEntrar" type="submit">Entrar</button>
@@ -153,7 +159,7 @@ select.inp{appearance:none;background-image:linear-gradient(45deg,transparent 50
     <button class="btn ghost" id="btnPrimeiro">Primeiro acesso, criar minha senha</button>
     <p style="color:var(--ink3);font-size:12px;margin-top:22px;text-align:center">
       Depois do primeiro login este aparelho fica conectado sozinho, sem pedir senha de novo.
-      Quando o seu gerenciador de senhas oferecer para salvar, aceite: aí em cada aparelho novo é só tocar no campo e ele preenche.</p>
+      Quando o gerenciador de senhas oferecer para salvar, aceite.</p>
   </div>
 </section>
 
@@ -170,13 +176,16 @@ select.inp{appearance:none;background-image:linear-gradient(45deg,transparent 50
 
     <div class="grid" id="cards"></div>
 
-    <h2 class="sec">Contas fixas deste mês</h2>
+    <div class="sechead"><h2 class="sec">Onde está o dinheiro</h2><button class="add" id="addSaldo">+ conta</button></div>
+    <div class="list" id="saldos"></div>
+
+    <div class="sechead"><h2 class="sec">Contas fixas do mês</h2><button class="add" id="addConta">+ conta fixa</button></div>
     <div class="list" id="contas"></div>
 
-    <h2 class="sec">Últimos lançamentos</h2>
+    <div class="sechead"><h2 class="sec">Últimos lançamentos</h2><span class="add" style="color:var(--ink3)">toque para editar</span></div>
     <div class="list" id="eventos"></div>
 
-    <h2 class="sec">Cartões, mês a mês</h2>
+    <div class="sechead"><h2 class="sec">Cartões, mês a mês</h2></div>
     <div class="list" id="cartoes"></div>
 
     <p style="color:var(--ink3);font-size:11px;margin:22px 0 8px;text-align:center" id="rodape"></p>
@@ -192,14 +201,19 @@ select.inp{appearance:none;background-image:linear-gradient(45deg,transparent 50
 
 <div id="filaAviso" class="fila hide"></div>
 
-<!-- ================= FOLHA ================= -->
+<!-- ================= LANÇAMENTO ================= -->
 <div class="sheet hide" id="sheet">
   <div class="panel">
     <div class="handle"></div>
     <h3 id="sheetTitulo">Novo lançamento</h3>
 
-    <div class="seg" id="segTipo">
-      <button data-tipo="gasto" class="on out">Saiu dinheiro</button>
+    <div id="fRecentesBox" class="hide">
+      <div class="lbl" style="margin-top:0">Repetir algo recente</div>
+      <div class="chips" id="fRecentes"></div>
+    </div>
+
+    <div class="seg" id="segTipo" style="margin-top:14px">
+      <button data-tipo="gasto" class="on">Saiu dinheiro</button>
       <button data-tipo="entrada">Entrou dinheiro</button>
     </div>
 
@@ -228,6 +242,8 @@ select.inp{appearance:none;background-image:linear-gradient(45deg,transparent 50
     <div style="height:20px"></div>
     <button class="btn" id="fSalvar">Salvar lançamento</button>
     <div style="height:10px"></div>
+    <button class="btn danger hide" id="fExcluir">Excluir este lançamento</button>
+    <div style="height:10px"></div>
     <button class="btn ghost" id="fCancelar">Cancelar</button>
   </div>
 </div>
@@ -238,7 +254,7 @@ select.inp{appearance:none;background-image:linear-gradient(45deg,transparent 50
     <div class="handle"></div>
     <h3>Nova categoria</h3>
     <p style="color:var(--ink2);font-size:14px;margin:0 0 8px">
-      Escolha onde ela entra e dê um nome. Assim a categoria nova nasce dentro de um grupo que já existe e o histórico continua somando certo.</p>
+      Escolha onde ela entra e dê um nome. Assim ela nasce dentro de um grupo que já existe e o histórico continua somando certo.</p>
     <div class="lbl">Entra dentro de</div>
     <select class="inp" id="cPai"></select>
     <div class="lbl">Nome da nova categoria</div>
@@ -253,6 +269,52 @@ select.inp{appearance:none;background-image:linear-gradient(45deg,transparent 50
   </div>
 </div>
 
+<!-- ================= CONTA FIXA ================= -->
+<div class="sheet hide" id="sheetConta">
+  <div class="panel">
+    <div class="handle"></div>
+    <h3 id="ctTitulo">Conta fixa</h3>
+    <div class="lbl" style="margin-top:0">Nome da conta</div>
+    <input class="inp" id="ctDesc" placeholder="ex.: Aluguel do apartamento">
+    <div class="two" style="margin-top:14px">
+      <div><div class="lbl" style="margin-top:0">Valor por mês</div><input class="inp" id="ctValor" inputmode="decimal"></div>
+      <div><div class="lbl" style="margin-top:0">Dia do vencimento</div><input class="inp" id="ctDia" inputmode="numeric"></div>
+    </div>
+    <div class="lbl">De qual frente</div>
+    <div class="chips" id="ctFrentes"></div>
+    <div id="ctMsg"></div>
+    <div style="height:20px"></div>
+    <button class="btn" id="ctSalvar">Salvar</button>
+    <div style="height:10px"></div>
+    <button class="btn danger hide" id="ctExcluir">Excluir esta conta</button>
+    <div style="height:10px"></div>
+    <button class="btn ghost" id="ctCancelar">Cancelar</button>
+  </div>
+</div>
+
+<!-- ================= SALDO ================= -->
+<div class="sheet hide" id="sheetSaldo">
+  <div class="panel">
+    <div class="handle"></div>
+    <h3 id="sdTitulo">Onde está o dinheiro</h3>
+    <div class="lbl" style="margin-top:0">Nome da conta</div>
+    <input class="inp" id="sdNome" placeholder="ex.: Inter conta corrente">
+    <div class="lbl">Quanto tem hoje</div>
+    <input class="inp" id="sdValor" inputmode="decimal">
+    <div class="lbl">Tipo</div>
+    <div class="chips" id="sdTipos"></div>
+    <div class="lbl">De qual frente</div>
+    <div class="chips" id="sdFrentes"></div>
+    <div id="sdMsg"></div>
+    <div style="height:20px"></div>
+    <button class="btn" id="sdSalvar">Salvar</button>
+    <div style="height:10px"></div>
+    <button class="btn danger hide" id="sdExcluir">Excluir</button>
+    <div style="height:10px"></div>
+    <button class="btn ghost" id="sdCancelar">Cancelar</button>
+  </div>
+</div>
+
 <script>
 "use strict";
 /* ============================================================
@@ -262,36 +324,41 @@ select.inp{appearance:none;background-image:linear-gradient(45deg,transparent 50
    ============================================================ */
 const SB  = "https://oihyhyyhessqnpkknhsi.supabase.co";
 const KEY = "sb_publishable_T7LERNVYS8mAK0tOlWfl5A_4-yCUjie";
-const LS_SESS = "nf.sessao";
-const LS_FILA = "nf.fila";
+const LS_SESS = "nf.sessao", LS_FILA = "nf.fila", LS_CASAL = "nf.casal";
 
 const FRENTES = [
-  {id:"tudo",        nome:"Tudo"},
-  {id:"casa",        nome:"Casal"},
-  {id:"consultorio", nome:"Consultório"},
-  {id:"confeitaria", nome:"Confeitaria"}
+  {id:"tudo", nome:"Tudo"}, {id:"casa", nome:"Casal"},
+  {id:"consultorio", nome:"Consultório"}, {id:"confeitaria", nome:"Confeitaria"}
 ];
 const FORMAS = [
   {id:"pix",nome:"Pix"},{id:"cartao",nome:"Cartão"},{id:"debito",nome:"Débito"},
   {id:"dinheiro",nome:"Dinheiro"},{id:"boleto",nome:"Boleto"},{id:"transferencia",nome:"Transferência"}
 ];
+const TIPOS_SALDO = [
+  {id:"conta",nome:"Conta"},{id:"reserva",nome:"Reserva"},
+  {id:"especie",nome:"Espécie"},{id:"a_receber",nome:"A receber"}
+];
 
 let sessao=null, eu=null, lente="tudo";
 let dados={cat:[],contas:[],parcelas:[],saldos:[],eventos:[],pagos:[],cartoesLista:[]};
-let form={tipo:"gasto",catId:null,frente:null,forma:"pix",cartao:null};
+let form={id:null,tipo:"gasto",catId:null,frente:null,forma:"pix",cartao:null};
+let contaEd={id:null,frente:"casa"};
+let saldoEd={id:null,frente:"casa",tipo:"conta"};
 
-/* ---------------- utilidades ---------------- */
 const $ = s=>document.querySelector(s);
 const brl = v => (v<0?"-":"")+"R$ "+Math.abs(Number(v)||0).toLocaleString("pt-BR",{minimumFractionDigits:2,maximumFractionDigits:2});
 const brl0= v => "R$ "+Math.round(Number(v)||0).toLocaleString("pt-BR");
+const num = v => (Number(v)||0).toLocaleString("pt-BR",{minimumFractionDigits:2,maximumFractionDigits:2});
+function parseNum(s){ return parseFloat(String(s||"").replace(/\./g,"").replace(",",".").replace(/[^0-9.\-]/g,"")); }
 function mesRef(d){ d=d||new Date(); return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-01"; }
 function hojeISO(){ const d=new Date(); return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0"); }
 function nomeMes(iso){ const [a,m]=iso.split("-"); return ["jan","fev","mar","abr","mai","jun","jul","ago","set","out","nov","dez"][+m-1]+"/"+a.slice(2); }
+function rotulo(f){ return f==="casa"?"casal":f==="consultorio"?"consultório":"confeitaria"; }
+function nomeCat(c){ return c ? (c.filho ? c.pai+" · "+c.filho : c.pai) : "Sem categoria"; }
 function toast(txt,erro){
   const t=document.createElement("div"); t.className="toast"+(erro?" err":""); t.textContent=txt;
   document.body.appendChild(t); setTimeout(()=>t.remove(),2800);
 }
-function nomeCat(c){ return c ? (c.filho ? c.pai+" · "+c.filho : c.pai) : "Sem categoria"; }
 
 /* ---------------- rede ---------------- */
 async function api(path,opts){
@@ -304,23 +371,25 @@ async function api(path,opts){
   }
   const txt=await r.text();
   let body=null; try{ body=txt?JSON.parse(txt):null; }catch(e){ body=txt; }
-  if(!r.ok){ const e=new Error((body&&(body.msg||body.message||body.error_description||body.error))||("Erro "+r.status)); e.status=r.status; e.body=body; throw e; }
+  if(!r.ok){ const e=new Error((body&&(body.msg||body.message||body.error_description||body.error))||("Erro "+r.status)); e.status=r.status; throw e; }
   return body;
 }
 const rest = (p,o)=>api("/rest/v1/"+p,o);
-
 async function renovar(){
-  try{
-    const s=await api("/auth/v1/token?grant_type=refresh_token",{method:"POST",body:JSON.stringify({refresh_token:sessao.refresh_token})});
-    guardarSessao(s); return true;
-  }catch(e){ return false; }
+  try{ const s=await api("/auth/v1/token?grant_type=refresh_token",{method:"POST",body:JSON.stringify({refresh_token:sessao.refresh_token})});
+       guardarSessao(s); return true; }catch(e){ return false; }
 }
 function guardarSessao(s){ sessao=s; try{ localStorage.setItem(LS_SESS,JSON.stringify(s)); }catch(e){} }
 function limparSessao(){ sessao=null; try{ localStorage.removeItem(LS_SESS); }catch(e){} }
 
 /* ---------------- login ---------------- */
 function msgLogin(txt,tipo){ $("#loginMsg").innerHTML = txt ? '<div class="msg '+tipo+'">'+txt+'</div>' : ""; }
-
+function salvarNoGerenciador(email,senha){
+  try{
+    if(window.PasswordCredential&&navigator.credentials&&navigator.credentials.store)
+      navigator.credentials.store(new window.PasswordCredential({id:email,password:senha,name:"Nosso Financeiro"}));
+  }catch(e){}
+}
 $("#loginForm").addEventListener("submit", async (ev)=>{
   ev.preventDefault();
   const email=$("#email").value.trim().toLowerCase(), senha=$("#senha").value;
@@ -328,26 +397,11 @@ $("#loginForm").addEventListener("submit", async (ev)=>{
   msgLogin("Entrando...","info");
   try{
     const s=await api("/auth/v1/token?grant_type=password",{method:"POST",body:JSON.stringify({email,password:senha})});
-    guardarSessao(s); msgLogin("","");
-    salvarNoGerenciador(email,senha);
-    setTimeout(abrirApp,60);
+    guardarSessao(s); msgLogin("",""); salvarNoGerenciador(email,senha); setTimeout(abrirApp,60);
   }catch(e){
     msgLogin(/invalid/i.test(e.message)?"E-mail ou senha não conferem. Se é o seu primeiro acesso, use o botão de baixo.":e.message,"err");
   }
 });
-
-/* Dá ao Safari, ao Chrome e ao iCloud Chaves a chance de oferecer
-   "salvar senha": eles só perguntam quando enxergam uma navegação
-   de formulário com usuário e senha preenchidos. */
-function salvarNoGerenciador(email,senha){
-  try{
-    if(window.PasswordCredential){
-      const c=new window.PasswordCredential({id:email,password:senha,name:"Nosso Financeiro"});
-      if(navigator.credentials&&navigator.credentials.store) navigator.credentials.store(c);
-    }
-  }catch(e){}
-}
-
 $("#btnPrimeiro").onclick = async ()=>{
   const email=$("#email").value.trim().toLowerCase(), senha=$("#senha").value;
   if(!email||senha.length<8){ msgLogin("Escreva o seu e-mail e escolha uma senha de pelo menos 8 caracteres.","err"); return; }
@@ -355,16 +409,13 @@ $("#btnPrimeiro").onclick = async ()=>{
   try{
     const s=await api("/auth/v1/signup",{method:"POST",body:JSON.stringify({email,password:senha})});
     if(s&&s.access_token){ guardarSessao(s); msgLogin("",""); salvarNoGerenciador(email,senha); setTimeout(abrirApp,60); }
-    else { msgLogin("Conta criada. Agora toque em Entrar.","ok"); }
+    else msgLogin("Conta criada. Agora toque em Entrar.","ok");
   }catch(e){
-    if(/nao tem acesso|não tem acesso|Database error/i.test(e.message))
-      msgLogin("Este e-mail não está na lista de acesso. Peça para o Henrique liberar.","err");
-    else if(/already/i.test(e.message))
-      msgLogin("Você já tem conta. Use o botão Entrar.","err");
+    if(/tem acesso|Database error/i.test(e.message)) msgLogin("Este e-mail não está na lista de acesso.","err");
+    else if(/already/i.test(e.message)) msgLogin("Você já tem conta. Use o botão Entrar.","err");
     else msgLogin(e.message,"err");
   }
 };
-
 $("#btnSair").onclick = ()=>{ limparSessao(); location.reload(); };
 
 /* ---------------- fila offline ---------------- */
@@ -381,7 +432,7 @@ async function escoarFila(){
   const restam=[];
   for(const ev of f){
     try{ await rest("evento",{method:"POST",headers:{Prefer:"return=minimal"},body:JSON.stringify(ev)}); }
-    catch(e){ if(e.status&&e.status>=400&&e.status<500&&e.status!==401){ /* rejeitado de vez, descarta */ } else restam.push(ev); }
+    catch(e){ if(!(e.status>=400&&e.status<500&&e.status!==401)) restam.push(ev); }
   }
   gravarFila(restam);
   if(f.length!==restam.length) toast("Lançamentos guardados foram enviados.");
@@ -392,41 +443,40 @@ async function abrirApp(){
   $("#login").classList.add("hide");
   $("#app").classList.remove("hide");
   $("#dock").classList.remove("hide");
-  montarLentes();
-  await carregar();
-  pintarFila();
-  escoarFila();
+  montarLentes(); await carregar(); pintarFila(); escoarFila();
 }
-
 async function carregar(){
   const mes = mesRef();
-  const ini = mes, fim = (()=>{ const d=new Date(); d.setMonth(d.getMonth()+1); return mesRef(d); })();
   try{
     const [membro,cat,contas,parcelas,saldos,eventos,pagos] = await Promise.all([
       rest("membro?select=nome,papel,casal_id"),
       rest("categoria?select=id,pai,filho,tipo,frentes,ativo&ativo=is.true&order=pai.asc,filho.asc"),
       rest("conta_fixa?select=id,descricao,valor,dia,frente&ativo=is.true&order=dia.asc"),
       rest("parcela_futura?select=cartao,mes_ref,valor,frente,pago&order=mes_ref.asc"),
-      rest("conta_saldo?select=nome,frente,tipo,valor"),
-      rest("evento?select=id,data,valor,tipo,frente,descricao,forma,cartao,categoria_id&order=data.desc,criado_em.desc&limit=120"),
+      rest("conta_saldo?select=id,nome,frente,tipo,valor&order=valor.desc"),
+      rest("evento?select=id,data,valor,tipo,frente,descricao,forma,cartao,categoria_id,origem&order=data.desc,criado_em.desc&limit=150"),
       rest("pagamento_conta?select=conta_fixa_id,mes_ref,valor&mes_ref=eq."+mes)
     ]);
     eu = membro && membro[0] ? membro[0] : {nome:"",papel:"parceiro"};
-    if(eu.casal_id){ casalCache = eu.casal_id; try{ localStorage.setItem("nf.casal",eu.casal_id); }catch(e){} }
-    dados={cat,contas,parcelas,saldos,eventos,pagos,
-      cartoesLista:[...new Set(parcelas.map(p=>p.cartao))]};
+    if(eu.casal_id){ casalCache = eu.casal_id; try{ localStorage.setItem(LS_CASAL,eu.casal_id); }catch(e){} }
+    dados={cat,contas,parcelas,saldos,eventos,pagos,cartoesLista:[...new Set(parcelas.map(p=>p.cartao))]};
     $("#btnSair").textContent = (eu.nome||"") + " · sair";
-    montarLentes();
-    pintar();
+    montarLentes(); pintar();
   }catch(e){
     if(e.status===401){ limparSessao(); location.reload(); return; }
     toast("Não consegui atualizar: "+e.message,true);
   }
 }
+let casalCache=(function(){ try{ return localStorage.getItem(LS_CASAL)||null; }catch(e){ return null; } })();
+async function meuCasal(){
+  if(casalCache) return casalCache;
+  const m=await rest("membro?select=casal_id");
+  casalCache = m&&m[0] ? m[0].casal_id : null;
+  return casalCache;
+}
 
 /* ---------------- calculos ---------------- */
 function filtra(arr){ return lente==="tudo" ? arr : arr.filter(x=>x.frente===lente); }
-
 function resumo(){
   const mes=mesRef();
   const saldos=filtra(dados.saldos);
@@ -449,94 +499,82 @@ function resumo(){
 /* ---------------- pintar ---------------- */
 function montarLentes(){
   $("#lentes").innerHTML = FRENTES
-    .filter(f=>f.id!=="consultorio" || (eu&&eu.papel==="dono") || !eu)
+    .filter(f=>f.id!=="consultorio" || !eu || eu.papel==="dono")
     .map(f=>'<button class="lente'+(f.id===lente?" on":"")+'" data-f="'+f.id+'">'+f.nome+'</button>').join("");
   $("#lentes").querySelectorAll(".lente").forEach(b=>b.onclick=()=>{ lente=b.dataset.f; montarLentes(); pintar(); });
 }
-
 function pintar(){
   const r=resumo();
-  const nomeLente = (FRENTES.find(f=>f.id===lente)||{}).nome;
+  const nomeLente=(FRENTES.find(f=>f.id===lente)||{}).nome;
   $("#cards").innerHTML = `
     <div class="card full">
       <div class="k">DINHEIRO EM CAIXA · ${nomeLente.toUpperCase()}</div>
       <div class="v ${r.caixa>0?"good":"bad"}">${brl(r.caixa)}</div>
       <div class="n">${r.receber>0? "mais "+brl(r.receber)+" a receber" : "nada a receber registrado"}</div>
     </div>
-    <div class="card">
-      <div class="k">CUSTO FIXO DO MÊS</div>
+    <div class="card"><div class="k">CUSTO FIXO DO MÊS</div>
       <div class="v sm">${brl(r.custoFixo)}</div>
-      <div class="n">${r.faltaFixo>0? "falta pagar "+brl(r.faltaFixo) : "tudo pago"}</div>
-    </div>
-    <div class="card">
-      <div class="k">CAIXA AGUENTA</div>
+      <div class="n">${r.faltaFixo>0? "falta pagar "+brl(r.faltaFixo) : "tudo pago"}</div></div>
+    <div class="card"><div class="k">CAIXA AGUENTA</div>
       <div class="v sm ${r.meses>=6?"good":r.meses>=3?"warn":"bad"}">${r.custoFixo>0? r.meses.toFixed(1).replace(".",",")+" meses" : "—"}</div>
-      <div class="n">só com custo fixo, sem entrar nada</div>
-    </div>
-    <div class="card">
-      <div class="k">CARTÕES, DÍVIDA RESTANTE</div>
+      <div class="n">só com custo fixo, sem entrar nada</div></div>
+    <div class="card"><div class="k">CARTÕES, DÍVIDA RESTANTE</div>
       <div class="v sm ${r.divida>50000?"bad":r.divida>0?"warn":"good"}">${brl(r.divida)}</div>
-      <div class="n">até a última parcela</div>
-    </div>
-    <div class="card">
-      <div class="k">FATURA DESTE MÊS</div>
-      <div class="v sm">${brl(r.faturaMes)}</div>
-      <div class="n">${nomeMes(mesRef())}</div>
-    </div>
-    <div class="card">
-      <div class="k">SAIU ESTE MÊS</div>
-      <div class="v sm">${brl(r.gastoMes)}</div>
-      <div class="n">lançamentos de vocês dois</div>
-    </div>
-    <div class="card">
-      <div class="k">ENTROU ESTE MÊS</div>
-      <div class="v sm good">${brl(r.entradaMes)}</div>
-      <div class="n">lançamentos de vocês dois</div>
-    </div>`;
+      <div class="n">até a última parcela</div></div>
+    <div class="card"><div class="k">FATURA DESTE MÊS</div>
+      <div class="v sm">${brl(r.faturaMes)}</div><div class="n">${nomeMes(mesRef())}</div></div>
+    <div class="card"><div class="k">SAIU ESTE MÊS</div>
+      <div class="v sm">${brl(r.gastoMes)}</div><div class="n">lançamentos de vocês dois</div></div>
+    <div class="card"><div class="k">ENTROU ESTE MÊS</div>
+      <div class="v sm good">${brl(r.entradaMes)}</div><div class="n">lançamentos de vocês dois</div></div>`;
 
-  // contas fixas
+  const sal=filtra(dados.saldos);
+  $("#saldos").innerHTML = sal.length ? sal.map(s=>`
+    <div class="row tap" data-saldo="${s.id}">
+      <div class="ic">${s.tipo==="reserva"?"◈":s.tipo==="especie"?"◎":s.tipo==="a_receber"?"→":"▢"}</div>
+      <div class="mid"><div class="t">${s.nome}</div>
+        <div class="s">${(TIPOS_SALDO.find(t=>t.id===s.tipo)||{}).nome} · ${rotulo(s.frente)}</div></div>
+      <div class="amt">${brl(s.valor)}</div></div>`).join("")
+    : '<div class="empty">Nenhuma conta nesta lente.</div>';
+  $("#saldos").querySelectorAll("[data-saldo]").forEach(el=>el.onclick=()=>abrirSaldo(+el.dataset.saldo));
+
   const contas=filtra(dados.contas);
   $("#contas").innerHTML = contas.length ? contas.map(c=>{
     const pago=r.pagosIds.has(c.id);
     return `<div class="row" data-conta="${c.id}">
       <div class="ic">${c.dia}</div>
-      <div class="mid"><div class="t">${c.descricao}</div><div class="s">dia ${c.dia} · ${rotulo(c.frente)}</div></div>
+      <div class="mid tap" data-edit="${c.id}"><div class="t">${c.descricao}</div>
+        <div class="s">dia ${c.dia} · ${rotulo(c.frente)}</div></div>
       <div class="amt">${brl(c.valor)}</div>
       <div class="chk ${pago?"on":""}"></div></div>`;
   }).join("") : '<div class="empty">Nenhuma conta fixa nesta lente.</div>';
-  $("#contas").querySelectorAll(".row").forEach(row=>{
-    row.querySelector(".chk").onclick = ()=>marcarConta(+row.dataset.conta, row.querySelector(".chk"));
+  $("#contas").querySelectorAll("[data-conta]").forEach(row=>{
+    row.querySelector(".chk").onclick=()=>marcarConta(+row.dataset.conta,row.querySelector(".chk"));
+    const ed=row.querySelector("[data-edit]"); if(ed) ed.onclick=()=>abrirConta(+ed.dataset.edit);
   });
 
-  // eventos
   const evs=filtra(dados.eventos).slice(0,25);
   $("#eventos").innerHTML = evs.length ? evs.map(e=>{
-    const c=dados.cat.find(x=>x.id===e.categoria_id);
-    const d=e.data.split("-");
-    return `<div class="row">
+    const c=dados.cat.find(x=>x.id===e.categoria_id); const d=e.data.split("-");
+    return `<div class="row tap" data-ev="${e.id}">
       <div class="ic">${e.tipo==="entrada"?"↓":"↑"}</div>
       <div class="mid"><div class="t">${e.descricao||nomeCat(c)}</div>
         <div class="s">${d[2]}/${d[1]} · ${nomeCat(c)} · ${rotulo(e.frente)}${e.cartao?" · "+e.cartao:""}</div></div>
-      <div class="amt ${e.tipo==="entrada"?"in":"out"}">${e.tipo==="entrada"?"+":"−"}${brl(e.valor).replace("R$ ","")}</div>
-    </div>`;
+      <div class="amt ${e.tipo==="entrada"?"in":"out"}">${e.tipo==="entrada"?"+":"−"}${num(e.valor)}</div></div>`;
   }).join("") : '<div class="empty">Nada lançado ainda. Toque em Lançar.</div>';
+  $("#eventos").querySelectorAll("[data-ev]").forEach(el=>el.onclick=()=>abrirFolha(el.dataset.ev));
 
-  // cartoes
   const parc=filtra(dados.parcelas).filter(p=>+p.valor>0&&!p.pago);
-  const porMes={};
-  parc.forEach(p=>{ porMes[p.mes_ref]=(porMes[p.mes_ref]||0)+ +p.valor; });
-  const meses=Object.keys(porMes).sort();
-  const maior=Math.max(1,...meses.map(m=>porMes[m]));
+  const porMes={}; parc.forEach(p=>{ porMes[p.mes_ref]=(porMes[p.mes_ref]||0)+ +p.valor; });
+  const meses=Object.keys(porMes).sort(); const maior=Math.max(1,...meses.map(m=>porMes[m]));
   $("#cartoes").innerHTML = meses.length ? meses.map(m=>`
-    <div class="row"><div class="mid">
-      <div class="t">${nomeMes(m)}</div>
-      <div class="bar"><i style="width:${(porMes[m]/maior*100).toFixed(1)}%"></i></div>
-    </div><div class="amt">${brl0(porMes[m])}</div></div>`).join("")
+    <div class="row"><div class="mid"><div class="t">${nomeMes(m)}</div>
+      <div class="bar"><i style="width:${(porMes[m]/maior*100).toFixed(1)}%"></i></div></div>
+      <div class="amt">${brl0(porMes[m])}</div></div>`).join("")
     : '<div class="empty">Sem parcelas em aberto nesta lente.</div>';
 
-  $("#rodape").textContent = "Atualizado agora · "+(eu&&eu.papel==="dono"?"você vê as três frentes":"você vê o casal e a confeitaria");
+  $("#rodape").textContent = (eu&&eu.papel==="dono"?"Você vê as três frentes.":"Você vê o casal e a confeitaria.")+" Toque em qualquer linha para editar.";
 }
-function rotulo(f){ return f==="casa"?"casal":f==="consultorio"?"consultório":"confeitaria"; }
 
 async function marcarConta(id,el){
   const mes=mesRef(), jaPago=el.classList.contains("on");
@@ -556,27 +594,71 @@ async function marcarConta(id,el){
   }catch(e){ el.classList.toggle("on"); toast("Não consegui marcar: "+e.message,true); }
 }
 
-/* ---------------- folha de lancamento ---------------- */
+/* ---------------- lançamento ---------------- */
 function frentesPermitidas(c){
-  const fs=(c.frentes||[]);
+  const fs=(c&&c.frentes)||[];
   return (eu&&eu.papel==="dono") ? fs : fs.filter(f=>f!=="consultorio");
 }
 function catsVisiveis(){
   return dados.cat.filter(c=>c.tipo===form.tipo)
-    .filter(c=> frentesPermitidas(c).length>0)
+    .filter(c=>frentesPermitidas(c).length>0)
     .filter(c=> lente==="tudo" ? true : frentesPermitidas(c).includes(lente));
 }
-function abrirFolha(){
-  form={tipo:"gasto",catId:null,frente:null,forma:"pix",cartao:null};
-  $("#fValor").value=""; $("#fDesc").value=""; $("#fData").value=hojeISO(); $("#fMsg").innerHTML="";
+function recentes(){
+  const vistos=new Set(), out=[];
+  for(const e of dados.eventos){
+    if(e.origem!=="manual"&&e.origem) { /* ainda serve de atalho */ }
+    const k=e.tipo+"|"+e.categoria_id+"|"+e.forma+"|"+e.frente;
+    if(vistos.has(k)||!e.categoria_id) continue;
+    const c=dados.cat.find(x=>x.id===e.categoria_id);
+    if(!c||frentesPermitidas(c).length===0) continue;
+    vistos.add(k); out.push(e);
+    if(out.length>=6) break;
+  }
+  return out;
+}
+function abrirFolha(evId){
+  const ev = evId ? dados.eventos.find(x=>x.id===evId) : null;
+  if(ev){
+    form={id:ev.id,tipo:ev.tipo,catId:ev.categoria_id,frente:ev.frente,forma:ev.forma||"pix",cartao:ev.cartao};
+    $("#sheetTitulo").textContent="Editar lançamento";
+    $("#fValor").value=num(ev.valor); $("#fDesc").value=ev.descricao||""; $("#fData").value=ev.data;
+    $("#fSalvar").textContent="Salvar alterações";
+    $("#fExcluir").classList.toggle("hide", ev.origem!=="manual");
+    $("#fRecentesBox").classList.add("hide");
+  }else{
+    form={id:null,tipo:"gasto",catId:null,frente:null,forma:"pix",cartao:null};
+    $("#sheetTitulo").textContent="Novo lançamento";
+    $("#fValor").value=""; $("#fDesc").value=""; $("#fData").value=hojeISO();
+    $("#fSalvar").textContent="Salvar lançamento";
+    $("#fExcluir").classList.add("hide");
+    pintarRecentes();
+  }
+  $("#fMsg").innerHTML="";
   segTipo(); pintarCats(); pintarFormas(); pintarDestino();
   $("#sheet").classList.remove("hide");
-  setTimeout(()=>$("#fValor").focus(),120);
+  if(!ev) setTimeout(()=>$("#fValor").focus(),120);
+}
+function pintarRecentes(){
+  const rs=recentes();
+  const box=$("#fRecentesBox");
+  if(!rs.length){ box.classList.add("hide"); return; }
+  box.classList.remove("hide");
+  $("#fRecentes").innerHTML = rs.map((e,i)=>{
+    const c=dados.cat.find(x=>x.id===e.categoria_id);
+    return '<button class="chip rec" data-r="'+i+'">'+(e.tipo==="entrada"?"↓ ":"")+nomeCat(c)+'</button>';
+  }).join("");
+  $("#fRecentes").querySelectorAll("[data-r]").forEach(b=>b.onclick=()=>{
+    const e=rs[+b.dataset.r];
+    form.tipo=e.tipo; form.catId=e.categoria_id; form.frente=e.frente; form.forma=e.forma||"pix"; form.cartao=e.cartao;
+    segTipo(); pintarCats(); pintarFormas(); pintarDestino();
+    $("#fValor").focus();
+  });
 }
 function segTipo(){
   $("#segTipo").querySelectorAll("button").forEach(b=>{
     const on=b.dataset.tipo===form.tipo;
-    b.className = on ? "on "+(form.tipo==="entrada"?"in":"out") : "";
+    b.className = on ? "on "+(form.tipo==="entrada"?"in":"") : "";
   });
 }
 function pintarCats(){
@@ -598,73 +680,67 @@ function escolherFrente(){
 }
 function pintarFormas(){
   $("#fFormas").innerHTML = FORMAS.map(f=>'<button class="chip'+(f.id===form.forma?" on":"")+'" data-f="'+f.id+'">'+f.nome+'</button>').join("");
-  $("#fFormas").querySelectorAll("[data-f]").forEach(b=>b.onclick=()=>{
-    form.forma=b.dataset.f; pintarFormas(); pintarDestino();
-  });
+  $("#fFormas").querySelectorAll("[data-f]").forEach(b=>b.onclick=()=>{ form.forma=b.dataset.f; pintarFormas(); pintarDestino(); });
   const box=$("#fCartaoBox");
   if(form.forma==="cartao"){
     box.classList.remove("hide");
     $("#fCartao").innerHTML = dados.cartoesLista.map(c=>'<option>'+c+'</option>').join("");
     form.cartao = form.cartao || dados.cartoesLista[0] || null;
-    $("#fCartao").value = form.cartao;
-    $("#fCartao").onchange = ()=>{ form.cartao=$("#fCartao").value; };
+    if(form.cartao) $("#fCartao").value=form.cartao;
+    $("#fCartao").onchange=()=>{ form.cartao=$("#fCartao").value; };
   } else { box.classList.add("hide"); form.cartao=null; }
 }
 function pintarDestino(){
   const c=dados.cat.find(x=>x.id===form.catId);
   if(!c){ $("#fDestino").innerHTML='Escolha a categoria e eu digo onde isto vai ser registrado.'; return; }
   const fs=frentesPermitidas(c);
-  let html = 'Vai entrar em <b>'+rotulo(form.frente)+'</b>, como <b>'+(form.tipo==="entrada"?"entrada":"saída")+'</b>, na categoria <b>'+nomeCat(c)+'</b>.';
-  if(form.forma==="cartao") html += ' O valor conta como gasto hoje e sai do banco quando a fatura for paga.';
-  if(fs.length>1){
-    html += '<div class="chips" style="margin-top:10px">'+fs.map(f=>'<button class="chip'+(f===form.frente?" on":"")+'" data-fr="'+f+'">'+rotulo(f)+'</button>').join("")+'</div>';
-  }
+  let html='Vai entrar em <b>'+rotulo(form.frente)+'</b>, como <b>'+(form.tipo==="entrada"?"entrada":"saída")+'</b>, na categoria <b>'+nomeCat(c)+'</b>.';
+  if(form.forma==="cartao") html+=' O valor conta como gasto hoje e sai do banco quando a fatura for paga.';
+  if(fs.length>1) html+='<div class="chips" style="margin-top:10px">'+fs.map(f=>'<button class="chip'+(f===form.frente?" on":"")+'" data-fr="'+f+'">'+rotulo(f)+'</button>').join("")+'</div>';
   $("#fDestino").innerHTML=html;
   $("#fDestino").querySelectorAll("[data-fr]").forEach(b=>b.onclick=()=>{ form.frente=b.dataset.fr; pintarDestino(); });
 }
-
 $("#segTipo").querySelectorAll("button").forEach(b=>b.onclick=()=>{
   form.tipo=b.dataset.tipo; form.catId=null; form.frente=null; segTipo(); pintarCats(); pintarDestino();
 });
-$("#btnLancar").onclick=abrirFolha;
+$("#btnLancar").onclick=()=>abrirFolha(null);
 $("#fCancelar").onclick=()=>$("#sheet").classList.add("hide");
 $("#btnAtualizar").onclick=async()=>{ await carregar(); await escoarFila(); toast("Atualizado."); };
 
 $("#fSalvar").onclick = async ()=>{
-  const bruto=$("#fValor").value.replace(/\./g,"").replace(",",".").replace(/[^0-9.]/g,"");
-  const valor=parseFloat(bruto);
+  const valor=parseNum($("#fValor").value);
   if(!valor||valor<=0){ $("#fMsg").innerHTML='<div class="msg err">Escreva um valor maior que zero.</div>'; return; }
   if(!form.catId){ $("#fMsg").innerHTML='<div class="msg err">Escolha uma categoria.</div>'; return; }
-  const ev={
-    casal_id:null, data:$("#fData").value||hojeISO(), valor:+valor.toFixed(2),
-    tipo:form.tipo, frente:form.frente||"casa", categoria_id:form.catId,
-    descricao:$("#fDesc").value.trim()||null, forma:form.forma, cartao:form.cartao,
-    situacao: form.forma==="cartao" ? "aguardando_fatura" : "confirmado", origem:"manual"
-  };
+  const corpo={ data:$("#fData").value||hojeISO(), valor:+valor.toFixed(2), tipo:form.tipo,
+    frente:form.frente||"casa", categoria_id:form.catId, descricao:$("#fDesc").value.trim()||null,
+    forma:form.forma, cartao:form.cartao,
+    situacao: form.forma==="cartao" ? "aguardando_fatura" : "confirmado" };
   $("#fSalvar").textContent="Salvando...";
   try{
-    const casal = await meuCasal();
-    ev.casal_id = casal;
-    await rest("evento",{method:"POST",headers:{Prefer:"return=minimal"},body:JSON.stringify(ev)});
-    $("#sheet").classList.add("hide"); toast("Lançado.");
-    await carregar();
-  }catch(e){
-    if(!navigator.onLine || (e.message&&/fetch|network/i.test(e.message))){
-      const f=lerFila(); f.push(ev); gravarFila(f);
-      $("#sheet").classList.add("hide"); toast("Sem internet. Guardei no aparelho e envio sozinho depois.");
-    } else {
-      $("#fMsg").innerHTML='<div class="msg err">'+e.message+'</div>';
+    if(form.id){
+      await rest("evento?id=eq."+form.id,{method:"PATCH",headers:{Prefer:"return=minimal"},body:JSON.stringify(corpo)});
+      toast("Lançamento atualizado.");
+    }else{
+      corpo.casal_id=await meuCasal(); corpo.origem="manual";
+      await rest("evento",{method:"POST",headers:{Prefer:"return=minimal"},body:JSON.stringify(corpo)});
+      toast("Lançado.");
     }
-  } finally { $("#fSalvar").textContent="Salvar lançamento"; }
+    $("#sheet").classList.add("hide"); await carregar();
+  }catch(e){
+    if(!form.id && (!navigator.onLine || /fetch|network/i.test(e.message||""))){
+      corpo.casal_id=casalCache; corpo.origem="manual";
+      const f=lerFila(); f.push(corpo); gravarFila(f);
+      $("#sheet").classList.add("hide"); toast("Sem internet. Guardei no aparelho e envio sozinho depois.");
+    } else $("#fMsg").innerHTML='<div class="msg err">'+e.message+'</div>';
+  } finally { $("#fSalvar").textContent = form.id ? "Salvar alterações" : "Salvar lançamento"; }
 };
-
-let casalCache=(function(){ try{ return localStorage.getItem("nf.casal")||null; }catch(e){ return null; } })();
-async function meuCasal(){
-  if(casalCache) return casalCache;
-  const m=await rest("membro?select=casal_id");
-  casalCache = m&&m[0] ? m[0].casal_id : null;
-  return casalCache;
-}
+$("#fExcluir").onclick = async ()=>{
+  if(!form.id) return;
+  try{
+    await rest("evento?id=eq."+form.id,{method:"DELETE",headers:{Prefer:"return=minimal"}});
+    $("#sheet").classList.add("hide"); toast("Lançamento excluído."); await carregar();
+  }catch(e){ $("#fMsg").innerHTML='<div class="msg err">'+e.message+'</div>'; }
+};
 
 /* ---------------- nova categoria ---------------- */
 let novaFrentes=["casa"];
@@ -672,9 +748,8 @@ function abrirNovaCategoria(){
   const pais=[...new Set(dados.cat.filter(c=>c.tipo===form.tipo).map(c=>c.pai))];
   $("#cPai").innerHTML = pais.map(p=>'<option>'+p+'</option>').join("");
   $("#cFilho").value=""; $("#cMsg").innerHTML="";
-  novaFrentes = form.frente?[form.frente]:["casa"];
-  pintarNovaFrentes();
-  $("#sheetCat").classList.remove("hide");
+  novaFrentes = form.frente?[form.frente]:[lente==="tudo"?"casa":lente];
+  pintarNovaFrentes(); $("#sheetCat").classList.remove("hide");
 }
 function pintarNovaFrentes(){
   $("#cFrentes").innerHTML = FRENTES.filter(f=>f.id!=="tudo" && (f.id!=="consultorio" || (eu&&eu.papel==="dono")))
@@ -690,25 +765,98 @@ $("#cCancelar").onclick=()=>$("#sheetCat").classList.add("hide");
 $("#cSalvar").onclick = async ()=>{
   const pai=$("#cPai").value, filho=$("#cFilho").value.trim();
   if(!filho){ $("#cMsg").innerHTML='<div class="msg err">Dê um nome para a categoria.</div>'; return; }
-  const chave=(pai+"|"+filho).toLowerCase();
   try{
     const casal=await meuCasal();
     const nova=await rest("categoria",{method:"POST",headers:{Prefer:"return=representation"},
-      body:JSON.stringify({casal_id:casal,pai,filho,chave,tipo:form.tipo,frentes:novaFrentes,a_revisar:true})});
+      body:JSON.stringify({casal_id:casal,pai,filho,chave:(pai+"|"+filho).toLowerCase(),tipo:form.tipo,frentes:novaFrentes,a_revisar:true})});
     const c=nova[0]; dados.cat.push(c); form.catId=c.id; escolherFrente();
     $("#sheetCat").classList.add("hide"); pintarCats(); pintarDestino(); toast("Categoria criada.");
-  }catch(e){
-    $("#cMsg").innerHTML='<div class="msg err">'+(/duplicate/i.test(e.message)?"Já existe uma categoria com esse nome.":e.message)+'</div>';
-  }
+  }catch(e){ $("#cMsg").innerHTML='<div class="msg err">'+(/duplicate/i.test(e.message)?"Já existe uma categoria com esse nome.":e.message)+'</div>'; }
 };
 
-/* ---------------- inicio ---------------- */
+/* ---------------- conta fixa ---------------- */
+function abrirConta(id){
+  const c = id ? dados.contas.find(x=>x.id===id) : null;
+  contaEd={id:c?c.id:null, frente:c?c.frente:(lente==="tudo"?"casa":lente)};
+  $("#ctTitulo").textContent = c ? "Editar conta fixa" : "Nova conta fixa";
+  $("#ctDesc").value = c?c.descricao:""; $("#ctValor").value = c?num(c.valor):"";
+  $("#ctDia").value = c?c.dia:"10"; $("#ctMsg").innerHTML="";
+  $("#ctExcluir").classList.toggle("hide", !c);
+  pintarCtFrentes(); $("#sheetConta").classList.remove("hide");
+}
+function pintarCtFrentes(){
+  $("#ctFrentes").innerHTML = FRENTES.filter(f=>f.id!=="tudo" && (f.id!=="consultorio" || (eu&&eu.papel==="dono")))
+    .map(f=>'<button class="chip'+(contaEd.frente===f.id?" on":"")+'" data-f="'+f.id+'">'+f.nome+'</button>').join("");
+  $("#ctFrentes").querySelectorAll("[data-f]").forEach(b=>b.onclick=()=>{ contaEd.frente=b.dataset.f; pintarCtFrentes(); });
+}
+$("#addConta").onclick=()=>abrirConta(null);
+$("#ctCancelar").onclick=()=>$("#sheetConta").classList.add("hide");
+$("#ctSalvar").onclick = async ()=>{
+  const desc=$("#ctDesc").value.trim(), valor=parseNum($("#ctValor").value), dia=parseInt($("#ctDia").value,10);
+  if(!desc){ $("#ctMsg").innerHTML='<div class="msg err">Dê um nome para a conta.</div>'; return; }
+  if(!(valor>=0)){ $("#ctMsg").innerHTML='<div class="msg err">Valor inválido.</div>'; return; }
+  if(!(dia>=1&&dia<=31)){ $("#ctMsg").innerHTML='<div class="msg err">O dia precisa ser de 1 a 31.</div>'; return; }
+  const corpo={descricao:desc,valor:+valor.toFixed(2),dia,frente:contaEd.frente};
+  try{
+    if(contaEd.id) await rest("conta_fixa?id=eq."+contaEd.id,{method:"PATCH",headers:{Prefer:"return=minimal"},body:JSON.stringify(corpo)});
+    else { corpo.casal_id=await meuCasal(); await rest("conta_fixa",{method:"POST",headers:{Prefer:"return=minimal"},body:JSON.stringify(corpo)}); }
+    $("#sheetConta").classList.add("hide"); toast("Conta salva."); await carregar();
+  }catch(e){ $("#ctMsg").innerHTML='<div class="msg err">'+e.message+'</div>'; }
+};
+$("#ctExcluir").onclick = async ()=>{
+  if(!contaEd.id) return;
+  try{
+    await rest("conta_fixa?id=eq."+contaEd.id,{method:"PATCH",headers:{Prefer:"return=minimal"},body:JSON.stringify({ativo:false})});
+    $("#sheetConta").classList.add("hide"); toast("Conta removida da lista."); await carregar();
+  }catch(e){ $("#ctMsg").innerHTML='<div class="msg err">'+e.message+'</div>'; }
+};
+
+/* ---------------- saldo ---------------- */
+function abrirSaldo(id){
+  const s = id ? dados.saldos.find(x=>x.id===id) : null;
+  saldoEd={id:s?s.id:null, frente:s?s.frente:(lente==="tudo"?"casa":lente), tipo:s?s.tipo:"conta"};
+  $("#sdTitulo").textContent = s ? "Atualizar saldo" : "Nova conta";
+  $("#sdNome").value=s?s.nome:""; $("#sdValor").value=s?num(s.valor):""; $("#sdMsg").innerHTML="";
+  $("#sdExcluir").classList.toggle("hide", !s);
+  pintarSdTipos(); pintarSdFrentes(); $("#sheetSaldo").classList.remove("hide");
+  if(s) setTimeout(()=>{ $("#sdValor").focus(); $("#sdValor").select(); },120);
+}
+function pintarSdTipos(){
+  $("#sdTipos").innerHTML = TIPOS_SALDO.map(t=>'<button class="chip'+(saldoEd.tipo===t.id?" on":"")+'" data-t="'+t.id+'">'+t.nome+'</button>').join("");
+  $("#sdTipos").querySelectorAll("[data-t]").forEach(b=>b.onclick=()=>{ saldoEd.tipo=b.dataset.t; pintarSdTipos(); });
+}
+function pintarSdFrentes(){
+  $("#sdFrentes").innerHTML = FRENTES.filter(f=>f.id!=="tudo" && (f.id!=="consultorio" || (eu&&eu.papel==="dono")))
+    .map(f=>'<button class="chip'+(saldoEd.frente===f.id?" on":"")+'" data-f="'+f.id+'">'+f.nome+'</button>').join("");
+  $("#sdFrentes").querySelectorAll("[data-f]").forEach(b=>b.onclick=()=>{ saldoEd.frente=b.dataset.f; pintarSdFrentes(); });
+}
+$("#addSaldo").onclick=()=>abrirSaldo(null);
+$("#sdCancelar").onclick=()=>$("#sheetSaldo").classList.add("hide");
+$("#sdSalvar").onclick = async ()=>{
+  const nome=$("#sdNome").value.trim(), valor=parseNum($("#sdValor").value);
+  if(!nome){ $("#sdMsg").innerHTML='<div class="msg err">Dê um nome para a conta.</div>'; return; }
+  if(isNaN(valor)){ $("#sdMsg").innerHTML='<div class="msg err">Valor inválido.</div>'; return; }
+  const corpo={nome,valor:+valor.toFixed(2),frente:saldoEd.frente,tipo:saldoEd.tipo,atualizado_em:new Date().toISOString()};
+  try{
+    if(saldoEd.id) await rest("conta_saldo?id=eq."+saldoEd.id,{method:"PATCH",headers:{Prefer:"return=minimal"},body:JSON.stringify(corpo)});
+    else { corpo.casal_id=await meuCasal(); await rest("conta_saldo",{method:"POST",headers:{Prefer:"return=minimal"},body:JSON.stringify(corpo)}); }
+    $("#sheetSaldo").classList.add("hide"); toast("Saldo atualizado."); await carregar();
+  }catch(e){ $("#sdMsg").innerHTML='<div class="msg err">'+e.message+'</div>'; }
+};
+$("#sdExcluir").onclick = async ()=>{
+  if(!saldoEd.id) return;
+  try{
+    await rest("conta_saldo?id=eq."+saldoEd.id,{method:"DELETE",headers:{Prefer:"return=minimal"}});
+    $("#sheetSaldo").classList.add("hide"); toast("Conta excluída."); await carregar();
+  }catch(e){ $("#sdMsg").innerHTML='<div class="msg err">'+e.message+'</div>'; }
+};
+
+/* ---------------- início ---------------- */
 window.addEventListener("online",escoarFila);
 (async function(){
   try{ const s=localStorage.getItem(LS_SESS); if(s) sessao=JSON.parse(s); }catch(e){}
   if(sessao&&sessao.refresh_token){
-    const ok=await renovar();
-    if(ok){ await abrirApp(); return; }
+    if(await renovar()){ await abrirApp(); return; }
     limparSessao();
   }
   $("#login").classList.remove("hide");

@@ -557,9 +557,14 @@ async function marcarConta(id,el){
 }
 
 /* ---------------- folha de lancamento ---------------- */
+function frentesPermitidas(c){
+  const fs=(c.frentes||[]);
+  return (eu&&eu.papel==="dono") ? fs : fs.filter(f=>f!=="consultorio");
+}
 function catsVisiveis(){
   return dados.cat.filter(c=>c.tipo===form.tipo)
-    .filter(c=> lente==="tudo" ? true : (c.frentes||[]).includes(lente));
+    .filter(c=> frentesPermitidas(c).length>0)
+    .filter(c=> lente==="tudo" ? true : frentesPermitidas(c).includes(lente));
 }
 function abrirFolha(){
   form={tipo:"gasto",catId:null,frente:null,forma:"pix",cartao:null};
@@ -585,7 +590,7 @@ function pintarCats(){
 }
 function escolherFrente(){
   const c=dados.cat.find(x=>x.id===form.catId); if(!c){ form.frente=null; return; }
-  const fs=c.frentes||[];
+  const fs=frentesPermitidas(c);
   if(fs.length===1) form.frente=fs[0];
   else if(lente!=="tudo"&&fs.includes(lente)) form.frente=lente;
   else if(fs.includes("casa")) form.frente="casa";
@@ -608,7 +613,7 @@ function pintarFormas(){
 function pintarDestino(){
   const c=dados.cat.find(x=>x.id===form.catId);
   if(!c){ $("#fDestino").innerHTML='Escolha a categoria e eu digo onde isto vai ser registrado.'; return; }
-  const fs=c.frentes||[];
+  const fs=frentesPermitidas(c);
   let html = 'Vai entrar em <b>'+rotulo(form.frente)+'</b>, como <b>'+(form.tipo==="entrada"?"entrada":"saída")+'</b>, na categoria <b>'+nomeCat(c)+'</b>.';
   if(form.forma==="cartao") html += ' O valor conta como gasto hoje e sai do banco quando a fatura for paga.';
   if(fs.length>1){
@@ -672,7 +677,7 @@ function abrirNovaCategoria(){
   $("#sheetCat").classList.remove("hide");
 }
 function pintarNovaFrentes(){
-  $("#cFrentes").innerHTML = FRENTES.filter(f=>f.id!=="tudo")
+  $("#cFrentes").innerHTML = FRENTES.filter(f=>f.id!=="tudo" && (f.id!=="consultorio" || (eu&&eu.papel==="dono")))
     .map(f=>'<button class="chip'+(novaFrentes.includes(f.id)?" on":"")+'" data-f="'+f.id+'">'+f.nome+'</button>').join("");
   $("#cFrentes").querySelectorAll("[data-f]").forEach(b=>b.onclick=()=>{
     const id=b.dataset.f;

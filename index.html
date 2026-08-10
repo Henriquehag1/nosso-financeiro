@@ -471,7 +471,7 @@ select.inp{appearance:none;background-image:linear-gradient(45deg,transparent 50
    A chave abaixo e publica de proposito: ela sozinha nao le nada.
    Quem decide o que cada pessoa enxerga e o proprio banco (RLS).
    ============================================================ */
-const VERSAO = "13";
+const VERSAO = "14";
 const SB  = "https://oihyhyyhessqnpkknhsi.supabase.co";
 const KEY = "sb_publishable_T7LERNVYS8mAK0tOlWfl5A_4-yCUjie";
 const LS_SESS = "nf.sessao", LS_FILA = "nf.fila", LS_CASAL = "nf.casal";
@@ -607,7 +607,7 @@ async function carregar(){
     const [membro,cat,contas,parcelas,saldos,eventos,pagos,cartoes] = await Promise.all([
       rest("membro?select=user_id,nome,papel,casal_id"),
       rest("categoria?select=id,pai,filho,tipo,frentes,ativo,teto&ativo=is.true&order=pai.asc,filho.asc"),
-      rest("conta_fixa?select=id,descricao,valor,dia,frente,cartao,periodicidade,mes_venc&ativo=is.true&order=dia.asc"),
+      rest("conta_fixa?select=id,descricao,valor,dia,frente,cartao,periodicidade,mes_venc,varia&ativo=is.true&order=dia.asc"),
       rest("parcela_futura?select=id,cartao,mes_ref,valor,frente,pago&order=mes_ref.asc"),
       rest("conta_saldo?select=id,nome,frente,tipo,valor&order=valor.desc"),
       rest("evento?select=id,data,valor,tipo,frente,descricao,forma,cartao,categoria_id,origem,obs,criado_por,parcelas,parcela_num,grupo&order=data.desc,criado_em.desc&limit=150"),
@@ -1181,7 +1181,7 @@ async function marcarConta(id,el){
       await rest("pagamento_conta",{method:"POST",headers:{Prefer:"return=minimal"},
         body:JSON.stringify({casal_id:casal,conta_fixa_id:id,mes_ref:mes,valor:conta.valor})});
       dados.pagos.push({conta_fixa_id:id,mes_ref:mes,valor:conta.valor});
-      toastAcao("Pago "+brl(conta.valor)+".","paguei outro valor",()=>abrirPago(id));
+      if(conta.varia){ toast("Marquei como paga. Confere o valor do mes."); setTimeout(()=>abrirPago(id),260); } else { toastAcao("Pago "+brl(conta.valor)+".","paguei outro valor",()=>abrirPago(id)); }
     }
     pintar();
   }catch(e){ el.classList.toggle("on"); toast("Não consegui marcar: "+e.message,true); }

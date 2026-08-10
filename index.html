@@ -364,6 +364,7 @@ select.inp{appearance:none;background-image:linear-gradient(45deg,transparent 50
    A chave abaixo e publica de proposito: ela sozinha nao le nada.
    Quem decide o que cada pessoa enxerga e o proprio banco (RLS).
    ============================================================ */
+const VERSAO = "6";
 const SB  = "https://oihyhyyhessqnpkknhsi.supabase.co";
 const KEY = "sb_publishable_T7LERNVYS8mAK0tOlWfl5A_4-yCUjie";
 const LS_SESS = "nf.sessao", LS_FILA = "nf.fila", LS_CASAL = "nf.casal";
@@ -485,7 +486,7 @@ async function abrirApp(){
   $("#login").classList.add("hide");
   $("#app").classList.remove("hide");
   $("#dock").classList.remove("hide");
-  montarLentes(); await carregar(); pintarFila(); escoarFila();
+  montarLentes(); await carregar(); pintarFila(); escoarFila(); checarVersao(true);
 }
 async function carregar(){
   const mes = mesRef();
@@ -539,8 +540,13 @@ function fatura(nomeCartao, mes){
            parcelas: valorParc, assinaturas: somaAssin, itensAssin: assin,
            total: valorParc + somaAssin };
 }
+function mesSeguinte(mes){
+  let a=+mes.slice(0,4), m=+mes.slice(5,7)+1;
+  if(m>12){ m=1; a++; }
+  return a+"-"+String(m).padStart(2,"0")+"-01";
+}
 function comprasNoMes(nomeCartao, mes){
-  const fim = (function(){ const d=new Date(mes); d.setMonth(d.getMonth()+1); return mesRef(d); })();
+  const fim = mesSeguinte(mes);
   return dados.eventos.filter(e=>e.forma==="cartao" && e.cartao===nomeCartao && e.data>=mes && e.data<fim)
                       .reduce((a,e)=>a+ (e.tipo==="gasto" ? +e.valor : -e.valor),0);
 }
@@ -557,7 +563,7 @@ function resumo(){
   const divida = parc.filter(p=>!p.pago).reduce((a,p)=>a+ +p.valor,0);
   const faturaMes = parc.filter(p=>p.mes_ref===mes).reduce((a,p)=>a+ +p.valor,0);
   const faturaAberta = parc.filter(p=>p.mes_ref===mes&&!p.pago).reduce((a,p)=>a+ +p.valor,0);
-  const proxMes = (function(){ const d=new Date(); d.setMonth(d.getMonth()+1); return mesRef(d); })();
+  const proxMes = mesSeguinte(mes);
   const faturaProx = parc.filter(p=>p.mes_ref===proxMes).reduce((a,p)=>a+ +p.valor,0);
   const evs = filtra(dados.eventos).filter(e=>e.data>=mes);
   const gastoMes = evs.filter(e=>e.tipo==="gasto").reduce((a,e)=>a+ +e.valor,0);
@@ -569,9 +575,35 @@ function resumo(){
   let faltaFaturas = 0;
   cartoesVisiveis().forEach(c=>{ const f=fatura(c.nome,mes); if(!f.pago) faltaFaturas += f.total; });
   const faltaTotal = faltaBanco + faltaFaturas;
-  const meses = custoFixo>0 ? caixa/custoFixo : 0;
+
+  /* Quanto sai de verdade num mes futuro: todas as contas fixas que cobram
+     naquele mes (assinaturas incluidas) mais as parcelas dos cartoes.
+     As parcelas nao contem assinaturas, entao nada e contado duas vezes. */
+  const compromissoDoMes = (m)=>{
+    const fixas = contas.filter(c=>cobraNesteMes(c,m)).reduce((a,c)=>a+ +c.valor,0);
+    const parcelas = parc.filter(p=>p.mes_ref===m && !p.pago).reduce((a,p)=>a+ +p.valor,0);
+    return fixas + parcelas;
+  };
+  const folego = (function(){
+    let saldo = caixa, m = mes, meses = 0;
+    for(let i=0;i<60;i++){
+      const custo = (i===0) ? faltaTotal : compromissoDoMes(m);
+      if(custo>0){
+        if(saldo >= custo){ saldo -= custo; meses += 1; }
+        else { meses += saldo/custo; return {meses, ate:m, acabou:true}; }
+      }
+      m = mesSeguinte(m);
+    }
+    return {meses, ate:m, acabou:false};
+  })();
+  const compromissoMedio = (function(){
+    let soma=0, m=mes;
+    for(let i=0;i<12;i++){ soma += (i===0?faltaTotal:compromissoDoMes(m)); m=mesSeguinte(m); }
+    return soma/12;
+  })();
+  const meses = folego.meses;
   return {caixa,receber,custoFixo,divida,faturaMes,faturaAberta,faturaProx,proxMes,gastoMes,entradaMes,
-          faltaBanco,faltaFaturas,faltaTotal,doBanco,noCartao,meses,pagosIds};
+          faltaBanco,faltaFaturas,faltaTotal,doBanco,noCartao,meses,folego,compromissoMedio,pagosIds};
 }
 
 /* ---------------- pintar ---------------- */
@@ -595,12 +627,17 @@ function pintar(){
       <div class="v ${r.faltaTotal===0?"good":r.faltaTotal>r.caixa?"bad":"warn"}">${brl(r.faltaTotal)}</div>
       <div class="n">${r.faltaTotal===0 ? "tudo quitado neste mês"
         : brl(r.faltaBanco)+" em contas do banco · "+brl(r.faltaFaturas)+" em faturas de cartão"}</div></div>
-    <div class="card"><div class="k">CUSTO FIXO DO MÊS</div>
-      <div class="v sm">${brl(r.custoFixo)}</div>
-      <div class="n">tudo que se repete, anuais já divididas por 12</div></div>
+    <div class="card"><div class="k">SAI POR MÊS, NA MÉDIA</div>
+      <div class="v sm">${brl(r.compromissoMedio)}</div>
+      <div class="n">contas fixas mais parcelas dos cartões, média dos 12 meses</div></div>
     <div class="card"><div class="k">CAIXA AGUENTA</div>
-      <div class="v sm ${r.meses>=6?"good":r.meses>=3?"warn":"bad"}">${r.custoFixo>0? r.meses.toFixed(1).replace(".",",")+" meses" : "—"}</div>
-      <div class="n">só com custo fixo, sem entrar nada</div></div>
+      <div class="v sm ${r.meses>=6?"good":r.meses>=3?"warn":"bad"}">${r.meses>0? r.meses.toFixed(1).replace(".",",")+" meses" : "—"}</div>
+      <div class="n">${r.folego && r.folego.acabou
+        ? "acaba em "+nomeMes(r.folego.ate)+", se não entrar nada"
+        : "passa de 5 anos com o que já está previsto"}</div></div>
+    <div class="card full"><div class="k">CUSTO FIXO DO MÊS</div>
+      <div class="v sm">${brl(r.custoFixo)}</div>
+      <div class="n">só o que se repete todo mês, anuais divididas por 12. Não inclui as parcelas antigas dos cartões.</div></div>
     <div class="card full tap" id="cardCartoes">
       <div class="k">CARTÕES, DÍVIDA RESTANTE</div>
       <div class="v ${r.divida>50000?"bad":r.divida>0?"warn":"good"}">${brl(r.divida)}</div>
@@ -677,7 +714,8 @@ function pintar(){
   $("#cartoes").querySelectorAll("[data-cartao]").forEach(el=>el.onclick=()=>abrirCartoes(el.dataset.cartao));
 
   const elC=$("#cardCartoes"); if(elC) elC.onclick=()=>abrirCartoes(null);
-  $("#rodape").textContent = (eu&&eu.papel==="dono"?"Você vê as três frentes.":"Você vê o casal e a confeitaria.")+" Toque em qualquer linha para editar.";
+  $("#rodape").textContent = (eu&&eu.papel==="dono"?"Você vê as três frentes.":"Você vê o casal e a confeitaria.")
+    +" Toque em qualquer linha para editar. Versão "+VERSAO+".";
 }
 
 /* ---------------- folha dos cartões ---------------- */
@@ -871,7 +909,14 @@ $("#segTipo").querySelectorAll("button").forEach(b=>b.onclick=()=>{
 });
 $("#btnLancar").onclick=()=>abrirFolha(null);
 $("#fCancelar").onclick=()=>$("#sheet").classList.add("hide");
-$("#btnAtualizar").onclick=async()=>{ await carregar(); await escoarFila(); toast("Atualizado."); };
+$("#btnAtualizar").onclick=async()=>{
+  $("#btnAtualizar").textContent="…";
+  try{
+    await carregar(); await escoarFila();
+    const temNova = await checarVersao(true);
+    if(!temNova) toast("Atualizado agora. Versão "+VERSAO+".");
+  } finally { $("#btnAtualizar").textContent="↻"; }
+};
 
 $("#fSalvar").onclick = async ()=>{
   const valor=parseNum($("#fValor").value);
@@ -1064,6 +1109,24 @@ $("#sdExcluir").onclick = async ()=>{
     $("#sheetSaldo").classList.add("hide"); toast("Conta excluída."); await carregar();
   }catch(e){ $("#sdMsg").innerHTML='<div class="msg err">'+e.message+'</div>'; }
 };
+
+/* ---------------- versão nova no ar ---------------- */
+async function checarVersao(silencioso){
+  try{
+    const r = await fetch(location.pathname + "?nocache=" + Date.now(), {cache:"reload"});
+    const t = await r.text();
+    const m = t.match(/const VERSAO = "(\d+)"/);
+    if(m && m[1] !== VERSAO){
+      const el=$("#filaAviso");
+      el.classList.remove("hide");
+      el.textContent = "Tem uma versão nova do app. Toque aqui para atualizar.";
+      el.onclick = ()=>{ location.replace(location.pathname + "?v=" + Date.now()); };
+      return true;
+    }
+    if(!silencioso) toast("Você já está na versão mais nova.");
+    return false;
+  }catch(e){ return false; }
+}
 
 /* ---------------- início ---------------- */
 window.addEventListener("online",escoarFila);

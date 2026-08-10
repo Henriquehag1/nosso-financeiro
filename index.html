@@ -117,6 +117,20 @@ h2.sec{font-size:13px;text-transform:uppercase;letter-spacing:.08em;color:var(--
 .chk.on::after{content:"";position:absolute;left:9px;top:4px;width:5px;height:11px;
   border:solid #151513;border-width:0 2.5px 2.5px 0;transform:rotate(45deg)}
 .empty{padding:22px 14px;color:var(--ink3);font-size:14px;text-align:center}
+.st{width:26px;height:26px;border-radius:50%;flex:0 0 auto;display:flex;align-items:center;
+  justify-content:center;font-size:14px;font-weight:700;line-height:1}
+.st.pago{background:rgba(76,191,88,.18);color:var(--good)}
+.st.falta{background:rgba(229,169,43,.18);color:var(--warn)}
+.st.atras{background:rgba(224,106,95,.22);color:var(--bad)}
+.st.nao{background:var(--surface2);color:var(--ink3);font-weight:400}
+.chk.alerta{border-color:var(--warn);box-shadow:inset 0 0 0 1px rgba(229,169,43,.35)}
+.chk.venceu{border-color:var(--bad);box-shadow:inset 0 0 0 1px rgba(224,106,95,.4)}
+.ic.pago{background:rgba(76,191,88,.14);color:var(--good)}
+.ic.falta{background:rgba(229,169,43,.14);color:var(--warn)}
+.ic.atras{background:rgba(224,106,95,.16);color:var(--bad)}
+.legenda{display:flex;gap:14px;flex-wrap:wrap;font-size:12px;color:var(--ink3);margin:2px 0 12px}
+.legenda span{display:flex;align-items:center;gap:6px}
+.legenda i{width:14px;height:14px;border-radius:50%;display:inline-block}
 .tap{cursor:pointer}
 .tap:active{background:var(--surface2)}
 
@@ -428,7 +442,7 @@ select.inp{appearance:none;background-image:linear-gradient(45deg,transparent 50
    A chave abaixo e publica de proposito: ela sozinha nao le nada.
    Quem decide o que cada pessoa enxerga e o proprio banco (RLS).
    ============================================================ */
-const VERSAO = "10";
+const VERSAO = "11";
 const SB  = "https://oihyhyyhessqnpkknhsi.supabase.co";
 const KEY = "sb_publishable_T7LERNVYS8mAK0tOlWfl5A_4-yCUjie";
 const LS_SESS = "nf.sessao", LS_FILA = "nf.fila", LS_CASAL = "nf.casal";
@@ -827,12 +841,13 @@ function abrirLista(qual){
                                    perto ? '<span style="color:var(--warn);font-weight:700">!</span> ' : "");
       const quando = i.pago ? "pago" : (atrasada ? "venceu dia "+i.dia : "vence dia "+i.dia);
       const cor = i.pago ? "var(--good)" : (atrasada ? "var(--bad)" : perto ? "var(--warn)" : "var(--ink3)");
+      const cls = i.pago ? "pago" : atrasada ? "atras" : perto ? "falta" : "falta";
       return '<div class="row" data-item="'+i.k+':'+i.id+'">'
-        + '<div class="ic">'+i.dia+'</div>'
+        + '<div class="ic '+cls+'">'+i.dia+'</div>'
         + '<div class="mid'+(i.k==="c"?' tap" data-edit="'+i.id:'"')+'"><div class="t">'+sinal+i.nome+'</div>'
         + '<div class="s" style="color:'+cor+'">'+quando+' · '+i.detalhe+'</div></div>'
         + '<div class="amt">'+brl(i.valor)+'</div>'
-        + '<div class="chk '+(i.pago?"on":"")+'"></div></div>';
+        + '<div class="chk '+(i.pago?"on":(atrasada?"venceu":perto?"alerta":""))+'"></div></div>';
     };
     $("#slConteudo").innerHTML =
       (falta.length ? '<div class="sechead" style="margin:4px 0 8px"><h2 class="sec" style="color:var(--warn)">Falta pagar</h2>'
@@ -857,27 +872,55 @@ function abrirLista(qual){
   /* ---------- custo fixo: tudo que se repete ---------- */
   if(qual==="fixos"){
     const contas=filtra(dados.contas);
+    const faturaPaga={}; cartoesVisiveis().forEach(cd=>{ faturaPaga[cd.nome]=fatura(cd.nome,mes).pago; });
+    const estado=(c)=>{
+      if(!cobraNesteMes(c,mes)) return {k:"nao",icone:"–",txt:"não cobra em "+nomeMes(mes),cor:"var(--ink3)"};
+      if(c.cartao) return faturaPaga[c.cartao]
+        ? {k:"pago",icone:"✓",txt:"pago na fatura do "+c.cartao,cor:"var(--good)"}
+        : {k:"falta",icone:"!",txt:"vai na fatura do "+c.cartao,cor:"var(--warn)"};
+      if(r.pagosIds.has(c.id)) return {k:"pago",icone:"✓",txt:"pago",cor:"var(--good)"};
+      return c.dia < diaHoje
+        ? {k:"atras",icone:"!",txt:"venceu dia "+c.dia,cor:"var(--bad)"}
+        : {k:"falta",icone:"!",txt:"vence dia "+c.dia,cor:(c.dia-diaHoje)<=3?"var(--warn)":"var(--ink3)"};
+    };
     const grupos={};
     contas.forEach(c=>{ const g=c.cartao||"Sai do banco"; (grupos[g]=grupos[g]||[]).push(c); });
     const nomes=Object.keys(grupos).sort((a,b)=> a==="Sai do banco"?-1 : b==="Sai do banco"?1 : a.localeCompare(b));
     const totalMes=contas.reduce((a,c)=>a+custoMensal(c),0);
+    let jaPago=0, aPagar=0;
+    contas.forEach(c=>{ const e=estado(c); if(e.k==="pago") jaPago+=+c.valor; else if(e.k!=="nao") aPagar+=+c.valor; });
     $("#slTitulo").textContent="Custo fixo do mês";
-    $("#slNota").innerHTML="Tudo que se repete todo mês: <b>"+brl(totalMes)+"</b>. "
-      +"As anuais entram divididas por 12. Toque em qualquer linha para editar.";
+    $("#slNota").innerHTML="Tudo que se repete: <b>"+brl(totalMes)+"</b> por mês, com as anuais divididas por 12.<br>"
+      +"Em "+nomeMes(mes)+": <b style='color:var(--good)'>"+brl(jaPago)+"</b> já pago, "
+      +"<b style='color:var(--warn)'>"+brl(aPagar)+"</b> ainda vai sair."
+      +'<div class="legenda" style="margin-top:10px">'
+      +'<span><i style="background:rgba(76,191,88,.5)"></i>pago</span>'
+      +'<span><i style="background:rgba(229,169,43,.5)"></i>a pagar</span>'
+      +'<span><i style="background:rgba(224,106,95,.6)"></i>venceu</span>'
+      +'<span><i style="background:#3a3a34"></i>não cobra agora</span></div>';
     add.textContent="+ nova"; add.onclick=()=>{ fecharSheet("#sheetLista"); abrirConta(null); };
     $("#slConteudo").innerHTML = nomes.map(g=>{
-      const itens=grupos[g].slice().sort((a,b)=>a.dia-b.dia);
+      const itens=grupos[g].slice().sort((a,b)=>{
+        const ea=estado(a), eb=estado(b);
+        const ordem={atras:0,falta:1,pago:2,nao:3};
+        return ordem[ea.k]-ordem[eb.k] || a.dia-b.dia;
+      });
       const soma=itens.reduce((a,c)=>a+custoMensal(c),0);
-      return '<div class="sechead" style="margin:14px 0 8px"><h2 class="sec">'+g+'</h2>'
+      const pagoGrupo=itens.every(c=>estado(c).k==="pago"||estado(c).k==="nao");
+      return '<div class="sechead" style="margin:14px 0 8px"><h2 class="sec">'
+        + (pagoGrupo?'<span style="color:var(--good)">✓ </span>':'') + g + '</h2>'
         + '<span class="add" style="color:var(--ink3)">'+brl(soma)+' por mês</span></div>'
-        + '<div class="list">' + itens.map(c=>
-            '<div class="row tap" data-edit3="'+c.id+'">'
-            + '<div class="ic">'+c.dia+'</div>'
-            + '<div class="mid"><div class="t">'+c.descricao.replace("Assinatura ","")+'</div>'
-            + '<div class="s">'+rotulo(c.frente)
-              + (c.periodicidade==="anual" ? " · anual em "+MES3[(+c.mes_venc||1)-1]+", "+brl(custoMensal(c))+" por mês" : "")
-              + (c.cartao ? " · entra na fatura" : "") + '</div></div>'
-            + '<div class="amt">'+brl(c.valor)+'</div></div>').join("")
+        + '<div class="list">' + itens.map(c=>{
+            const e=estado(c);
+            return '<div class="row tap" data-edit3="'+c.id+'">'
+            + '<div class="st '+e.k+'">'+e.icone+'</div>'
+            + '<div class="mid"><div class="t"'+(e.k==="nao"?' style="color:var(--ink3)"':'')+'>'
+              + c.descricao.replace("Assinatura ","")+'</div>'
+            + '<div class="s" style="color:'+e.cor+'">'+e.txt+' · '+rotulo(c.frente)
+              + (c.periodicidade==="anual" ? " · anual, "+brl(custoMensal(c))+" por mês" : "")
+              + '</div></div>'
+            + '<div class="amt"'+(e.k==="nao"?' style="color:var(--ink3)"':'')+'>'+brl(c.valor)+'</div></div>';
+          }).join("")
         + '</div>';
     }).join("") || '<div class="empty">Nenhum custo fixo nesta lente.</div>';
     $("#slConteudo").querySelectorAll("[data-edit3]").forEach(el=>el.onclick=()=>{

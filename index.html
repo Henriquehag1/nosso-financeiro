@@ -365,6 +365,23 @@ select.inp{appearance:none;background-image:linear-gradient(45deg,transparent 50
   </div>
 </div>
 
+<!-- ================= VALOR PAGO ================= -->
+<div class="sheet hide" id="sheetPago">
+  <div class="panel">
+    <div class="handle"></div>
+    <h3 id="pgTitulo">Quanto você pagou</h3>
+    <p style="color:var(--ink2);font-size:14px;margin:0 0 12px">
+      Contas que variam, como luz, água e impostos, quase nunca vêm no valor previsto. Escreva aqui o valor real do mês e o sistema passa a usar ele.</p>
+    <div class="lbl" style="margin-top:0">Valor pago</div>
+    <input class="inp" id="pgValor" inputmode="decimal">
+    <div id="pgMsg"></div>
+    <div style="height:20px"></div>
+    <button class="btn" id="pgSalvar">Salvar valor pago</button>
+    <div style="height:10px"></div>
+    <button class="btn ghost" id="pgCancelar">Deixar como está</button>
+  </div>
+</div>
+
 <!-- ================= TETO DA CATEGORIA ================= -->
 <div class="sheet hide" id="sheetTeto">
   <div class="panel">
@@ -454,7 +471,7 @@ select.inp{appearance:none;background-image:linear-gradient(45deg,transparent 50
    A chave abaixo e publica de proposito: ela sozinha nao le nada.
    Quem decide o que cada pessoa enxerga e o proprio banco (RLS).
    ============================================================ */
-const VERSAO = "12";
+const VERSAO = "13";
 const SB  = "https://oihyhyyhessqnpkknhsi.supabase.co";
 const KEY = "sb_publishable_T7LERNVYS8mAK0tOlWfl5A_4-yCUjie";
 const LS_SESS = "nf.sessao", LS_FILA = "nf.fila", LS_CASAL = "nf.casal";
@@ -491,6 +508,12 @@ function nomeCat(c){ return c ? (c.filho ? c.pai+" · "+c.filho : c.pai) : "Sem 
 function toast(txt,erro){
   const t=document.createElement("div"); t.className="toast"+(erro?" err":""); t.textContent=txt;
   document.body.appendChild(t); setTimeout(()=>t.remove(),2800);
+}
+function toastAcao(txt,rotulo,fn){
+  const t=document.createElement("div"); t.className="toast";
+  t.innerHTML = txt+' <u style="margin-left:6px">'+rotulo+'</u>';
+  t.onclick=()=>{ t.remove(); fn(); };
+  document.body.appendChild(t); setTimeout(()=>t.remove(),5000);
 }
 
 /* ---------------- rede ---------------- */
@@ -888,14 +911,16 @@ function abrirLista(qual){
       const perto = !i.pago && !atrasada && (i.dia - diaHoje) <= 3;
       const sinal = i.pago ? "" : (atrasada ? '<span style="color:var(--bad);font-weight:700">!</span> ' :
                                    perto ? '<span style="color:var(--warn);font-weight:700">!</span> ' : "");
-      const quando = i.pago ? "pago" : (atrasada ? "venceu dia "+i.dia : "vence dia "+i.dia);
+      const pg = i.k==="c" ? dados.pagos.find(x=>x.conta_fixa_id===i.id) : null;
+      const realDif = pg && pg.valor!=null && Math.abs(+pg.valor - i.valor) > 0.005;
+      const quando = i.pago ? (realDif ? "pago "+brl(pg.valor) : "pago") : (atrasada ? "venceu dia "+i.dia : "vence dia "+i.dia);
       const cor = i.pago ? "var(--good)" : (atrasada ? "var(--bad)" : perto ? "var(--warn)" : "var(--ink3)");
       const cls = i.pago ? "pago" : atrasada ? "atras" : perto ? "falta" : "falta";
       return '<div class="row" data-item="'+i.k+':'+i.id+'">'
         + '<div class="ic '+cls+'">'+i.dia+'</div>'
         + '<div class="mid'+(i.k==="c"?' tap" data-edit="'+i.id:'"')+'"><div class="t">'+sinal+i.nome+'</div>'
         + '<div class="s" style="color:'+cor+'">'+quando+' · '+i.detalhe+'</div></div>'
-        + '<div class="amt">'+brl(i.valor)+'</div>'
+        + '<div class="amt'+(i.pago&&i.k==="c"?' tap" data-pago="'+i.id:'"')+'>'+brl(realDif?pg.valor:i.valor)+'</div>'
         + '<div class="chk '+(i.pago?"on":(atrasada?"venceu":perto?"alerta":""))+'"></div></div>';
     };
     $("#slConteudo").innerHTML =
@@ -915,6 +940,8 @@ function abrirLista(qual){
       };
       const ed=row.querySelector("[data-edit]");
       if(ed) ed.onclick=()=>{ fecharSheet("#sheetLista"); abrirConta(+ed.dataset.edit); };
+      const pgv=row.querySelector("[data-pago]");
+      if(pgv) pgv.onclick=(ev)=>{ ev.stopPropagation(); fecharSheet("#sheetLista"); abrirPago(+pgv.dataset.pago); };
     });
   }
 
@@ -1154,10 +1181,36 @@ async function marcarConta(id,el){
       await rest("pagamento_conta",{method:"POST",headers:{Prefer:"return=minimal"},
         body:JSON.stringify({casal_id:casal,conta_fixa_id:id,mes_ref:mes,valor:conta.valor})});
       dados.pagos.push({conta_fixa_id:id,mes_ref:mes,valor:conta.valor});
+      toastAcao("Pago "+brl(conta.valor)+".","paguei outro valor",()=>abrirPago(id));
     }
     pintar();
   }catch(e){ el.classList.toggle("on"); toast("Não consegui marcar: "+e.message,true); }
 }
+
+
+/* ---------------- valor realmente pago ---------------- */
+let pagoEd=null;
+function abrirPago(contaId){
+  const c=dados.contas.find(x=>x.id===contaId); if(!c) return;
+  const p=dados.pagos.find(x=>x.conta_fixa_id===contaId);
+  pagoEd=contaId;
+  $("#pgTitulo").textContent=c.descricao;
+  $("#pgValor").value = num(p && p.valor!=null ? p.valor : c.valor);
+  $("#pgMsg").innerHTML="";
+  abrirSheet("#sheetPago");
+  setTimeout(()=>{ $("#pgValor").focus(); $("#pgValor").select(); },120);
+}
+$("#pgCancelar").onclick=()=>fecharSheet("#sheetPago");
+$("#pgSalvar").onclick=async()=>{
+  const v=parseNum($("#pgValor").value), mes=mesRef();
+  if(!(v>=0)){ $("#pgMsg").innerHTML='<div class="msg err">Valor inválido.</div>'; return; }
+  try{
+    await rest("pagamento_conta?conta_fixa_id=eq."+pagoEd+"&mes_ref=eq."+mes,
+      {method:"PATCH",headers:{Prefer:"return=minimal"},body:JSON.stringify({valor:+v.toFixed(2)})});
+    const p=dados.pagos.find(x=>x.conta_fixa_id===pagoEd); if(p) p.valor=+v.toFixed(2);
+    fecharSheet("#sheetPago"); toast("Guardado: pagou "+brl(v)+"."); pintar();
+  }catch(e){ $("#pgMsg").innerHTML='<div class="msg err">'+e.message+'</div>'; }
+};
 
 /* ---------------- lançamento ---------------- */
 function frentesPermitidas(c){

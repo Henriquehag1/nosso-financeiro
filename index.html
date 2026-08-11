@@ -416,6 +416,24 @@ select.inp{appearance:none;background-image:linear-gradient(45deg,transparent 50
 </div>
 
 <!-- ================= CARTÕES ================= -->
+<div class="sheet hide" id="sheetFech">
+  <div class="panel">
+    <div class="handle"></div>
+    <h3 id="fcTitulo">Fechamento e vencimento</h3>
+    <p style="color:var(--ink2);font-size:14px;margin:0 0 12px">
+      O dia de fechamento é o último dia de compra que ainda entra na fatura atual. Está na primeira página da fatura, perto do vencimento.</p>
+    <div class="two">
+      <div><div class="lbl" style="margin-top:0">Fecha no dia</div><input class="inp" id="fcFech" inputmode="numeric"></div>
+      <div><div class="lbl" style="margin-top:0">Vence no dia</div><input class="inp" id="fcVenc" inputmode="numeric"></div>
+    </div>
+    <div id="fcMsg"></div>
+    <div style="height:20px"></div>
+    <button class="btn" id="fcSalvar">Salvar</button>
+    <div style="height:10px"></div>
+    <button class="btn ghost" id="fcCancelar">Cancelar</button>
+  </div>
+</div>
+
 <div class="sheet hide" id="sheetCartoes">
   <div class="panel">
     <div class="handle"></div>
@@ -474,7 +492,7 @@ select.inp{appearance:none;background-image:linear-gradient(45deg,transparent 50
    A chave abaixo e publica de proposito: ela sozinha nao le nada.
    Quem decide o que cada pessoa enxerga e o proprio banco (RLS).
    ============================================================ */
-const VERSAO = "15";
+const VERSAO = "16";
 const SB  = "https://oihyhyyhessqnpkknhsi.supabase.co";
 const KEY = "sb_publishable_T7LERNVYS8mAK0tOlWfl5A_4-yCUjie";
 const LS_SESS = "nf.sessao", LS_FILA = "nf.fila", LS_CASAL = "nf.casal";
@@ -615,7 +633,7 @@ async function carregar(){
       rest("conta_saldo?select=id,nome,frente,tipo,valor&order=valor.desc"),
       rest("evento?select=id,data,valor,tipo,frente,descricao,forma,cartao,categoria_id,origem,obs,criado_por,parcelas,parcela_num,grupo&order=data.desc,criado_em.desc&limit=150"),
       rest("pagamento_conta?select=conta_fixa_id,mes_ref,valor&mes_ref=eq."+mes),
-      rest("cartao?select=id,nome,dia_venc,limite,frente&ativo=is.true&order=nome.asc")
+      rest("cartao?select=id,nome,dia_venc,dia_fechamento,limite,frente&ativo=is.true&order=nome.asc")
     ]);
     const meuId = sessao && sessao.user ? sessao.user.id : null;
     eu = (membro||[]).find(m=>m.user_id===meuId) || (membro && membro[0]) || {nome:"",papel:"parceiro"};
@@ -654,9 +672,25 @@ function fatura(nomeCartao, mes){
   const assin = dados.contas.filter(c=>c.cartao===nomeCartao && cobraNesteMes(c,mes));
   const somaAssin = assin.reduce((a,c)=>a+ +c.valor,0);
   const valorParc = parc ? +parc.valor : 0;
+  const compras = comprasNoMes(nomeCartao, mes);
   return { parcelaId: parc?parc.id:null, pago: parc?!!parc.pago:false,
-           parcelas: valorParc, assinaturas: somaAssin, itensAssin: assin,
-           total: valorParc + somaAssin };
+           parcelas: valorParc, assinaturas: somaAssin, itensAssin: assin, compras: compras,
+           total: valorParc + somaAssin + compras };
+}
+
+/* Em que fatura cai uma compra: depende do fechamento e do vencimento do cartao.
+   O mes devolvido e sempre o mes em que a fatura VENCE, que e como parcela_futura guarda. */
+function mesDaFatura(nomeCartao, dataISO){
+  const c = (dados.cartoes||[]).find(x=>x.nome===nomeCartao);
+  let m = dataISO.slice(0,7)+"-01";
+  if(!c) return m;
+  const dia = +dataISO.slice(8,10);
+  const fech = +c.dia_fechamento || null;
+  const venc = +c.dia_venc || 10;
+  if(!fech) return m;
+  if(dia > fech) m = mesSeguinte(m);   /* passou do fechamento, cai na fatura seguinte */
+  if(venc < fech) m = mesSeguinte(m);  /* fatura que fecha num mes so vence no seguinte */
+  return m;
 }
 function mesSeguinte(mes){
   let a=+mes.slice(0,4), m=+mes.slice(5,7)+1;
@@ -664,9 +698,9 @@ function mesSeguinte(mes){
   return a+"-"+String(m).padStart(2,"0")+"-01";
 }
 function comprasNoMes(nomeCartao, mes){
-  const fim = mesSeguinte(mes);
-  return dados.eventos.filter(e=>e.forma==="cartao" && e.cartao===nomeCartao && e.data>=mes && e.data<fim
-                                 && (e.parcelas||1)===1)
+  return dados.eventos.filter(e=>e.forma==="cartao" && e.cartao===nomeCartao
+                                 && (e.parcelas||1)===1
+                                 && mesDaFatura(nomeCartao, e.data)===mes)
                       .reduce((a,e)=>a+ (e.tipo==="gasto" ? +e.valor : -e.valor),0);
 }
 function cartoesVisiveis(){ return filtra(dados.cartoes); }
@@ -1238,7 +1272,7 @@ function pintarCartoes(){
     return `<div class="list" style="margin-bottom:10px">
       <div class="row tap" data-abrir="${c.nome}">
         <div class="mid"><div class="t">${c.nome}</div>
-          <div class="s">vence dia ${c.dia_venc}${c.limite?" · limite "+brl0(c.limite):""} · ${rotulo(c.frente)}</div></div>
+          <div class="s">${c.dia_fechamento?"fecha dia "+c.dia_fechamento+" · ":""}vence dia ${c.dia_venc}${c.limite?" · limite "+brl0(c.limite):""} · ${rotulo(c.frente)}</div></div>
         <div class="amt ${f.pago?"in":""}">${f.pago?"paga":brl(f.total)}</div></div>
       ${aberto ? `
         <div class="row"><div class="mid"><div class="t" style="font-size:14px">Parcelas de ${nomeMes(mes)}</div></div>
@@ -1246,8 +1280,10 @@ function pintarCartoes(){
         <div class="row"><div class="mid"><div class="t" style="font-size:14px">Assinaturas neste cartão</div>
           <div class="s">${f.itensAssin.length? f.itensAssin.map(i=>i.descricao.replace("Assinatura ","")).join(", ") : "nenhuma"}</div></div>
           <div class="amt" style="font-size:14px">${brl(f.assinaturas)}</div></div>
-        <div class="row"><div class="mid"><div class="t" style="font-size:14px">Compras lançadas por vocês em ${nomeMes(mes)}</div>
-          <div class="s">entram nesta fatura ou na próxima, conforme o fechamento</div></div>
+        <div class="row tap" data-fech="${c.nome}"><div class="mid"><div class="t" style="font-size:14px">Compras que vocês lançaram</div>
+          <div class="s">${c.dia_fechamento
+             ? "compra até o dia "+c.dia_fechamento+" cai nesta fatura; depois disso, na próxima. Toque para corrigir o fechamento"
+             : "sem dia de fechamento cadastrado, toque para informar"}</div></div>
           <div class="amt" style="font-size:14px">${brl(compras)}</div></div>
         <div class="row"><div class="mid"><div class="t">Fatura de ${nomeMes(mes)}</div></div>
           <div class="amt">${brl(f.total)}</div>
@@ -1261,6 +1297,9 @@ function pintarCartoes(){
       ` : ""}
     </div>`;
   }).join("");
+  $("#cdLista").querySelectorAll("[data-fech]").forEach(el=>el.onclick=(ev)=>{
+    ev.stopPropagation(); abrirFechamento(el.dataset.fech);
+  });
   $("#cdLista").querySelectorAll("[data-abrir]").forEach(el=>el.onclick=()=>{
     cartaoAberto = (cartaoAberto===el.dataset.abrir) ? null : el.dataset.abrir; pintarCartoes();
   });
@@ -1276,6 +1315,28 @@ function pintarCartoes(){
   });
 }
 $("#cdFechar").onclick=()=>fecharSheet("#sheetCartoes");
+
+let fechEd=null;
+function abrirFechamento(nome){
+  const c=dados.cartoes.find(x=>x.nome===nome); if(!c) return;
+  fechEd=c.id;
+  $("#fcTitulo").textContent=c.nome;
+  $("#fcFech").value = c.dia_fechamento || "";
+  $("#fcVenc").value = c.dia_venc || "";
+  $("#fcMsg").innerHTML="";
+  abrirSheet("#sheetFech");
+}
+$("#fcCancelar").onclick=()=>fecharSheet("#sheetFech");
+$("#fcSalvar").onclick=async()=>{
+  const f=parseInt($("#fcFech").value,10), v=parseInt($("#fcVenc").value,10);
+  if(!(f>=1&&f<=31)||!(v>=1&&v<=31)){ $("#fcMsg").innerHTML='<div class="msg err">Os dois dias precisam ser de 1 a 31.</div>'; return; }
+  try{
+    await rest("cartao?id=eq."+fechEd,{method:"PATCH",headers:{Prefer:"return=minimal"},
+      body:JSON.stringify({dia_fechamento:f, dia_venc:v})});
+    const c=dados.cartoes.find(x=>x.id===fechEd); if(c){ c.dia_fechamento=f; c.dia_venc=v; }
+    fecharSheet("#sheetFech"); toast("Salvo."); pintarCartoes(); pintar();
+  }catch(e){ $("#fcMsg").innerHTML='<div class="msg err">'+e.message+'</div>'; }
+};
 
 async function marcarConta(id,el){
   const mes=mesRef(), jaPago=el.classList.contains("on");

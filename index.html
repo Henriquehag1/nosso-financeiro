@@ -492,7 +492,7 @@ select.inp{appearance:none;background-image:linear-gradient(45deg,transparent 50
    A chave abaixo e publica de proposito: ela sozinha nao le nada.
    Quem decide o que cada pessoa enxerga e o proprio banco (RLS).
    ============================================================ */
-const VERSAO = "16";
+const VERSAO = "17";
 const SB  = "https://oihyhyyhessqnpkknhsi.supabase.co";
 const KEY = "sb_publishable_T7LERNVYS8mAK0tOlWfl5A_4-yCUjie";
 const LS_SESS = "nf.sessao", LS_FILA = "nf.fila", LS_CASAL = "nf.casal";
@@ -1574,7 +1574,7 @@ $("#fSalvar").onclick = async ()=>{
         await rest("evento",{method:"POST",headers:{Prefer:"return=minimal"},body:JSON.stringify(linhas)});
         if(form.forma==="cartao" && form.cartao){
           await api("/rest/v1/rpc/somar_parcelas",{method:"POST",body:JSON.stringify({
-            p_cartao:form.cartao, p_mes:mesRef(new Date(base+"T12:00:00")), p_n:n,
+            p_cartao:form.cartao, p_mes:mesDaFatura(form.cartao, base), p_n:n,
             p_valor:parcela, p_frente:corpo.frente })});
         }
         toast(n+" parcelas de "+brl(parcela)+" lançadas.");
@@ -1592,8 +1592,27 @@ $("#fSalvar").onclick = async ()=>{
 $("#fExcluir").onclick = async ()=>{
   if(!form.id) return;
   try{
-    await rest("evento?id=eq."+form.id,{method:"DELETE",headers:{Prefer:"return=minimal"}});
-    fecharSheet("#sheet"); toast("Lançamento excluído."); await carregar();
+    const ev = dados.eventos.find(x=>x.id===form.id);
+    if(ev && ev.grupo){
+      /* Parcelado: excluir apaga o grupo INTEIRO e tira as parcelas das faturas. */
+      const irmaos = dados.eventos.filter(x=>x.grupo===ev.grupo)
+                       .sort((a,b)=>(a.parcela_num||0)-(b.parcela_num||0));
+      const primeiro = irmaos[0] || ev;
+      const n = ev.parcelas || irmaos.length || 1;
+      const seg = irmaos.find(x=>(x.parcela_num||0)>1);
+      const porMes = +((seg || primeiro).valor);
+      await rest("evento?grupo=eq."+ev.grupo,{method:"DELETE",headers:{Prefer:"return=minimal"}});
+      if(ev.forma==="cartao" && ev.cartao){
+        await api("/rest/v1/rpc/somar_parcelas",{method:"POST",body:JSON.stringify({
+          p_cartao:ev.cartao, p_mes:mesDaFatura(ev.cartao, primeiro.data), p_n:n,
+          p_valor:-porMes, p_frente:ev.frente||"casa"})});
+      }
+      fecharSheet("#sheet"); toast("Compra parcelada excluída por inteiro: "+n+" parcelas saíram das faturas.");
+    }else{
+      await rest("evento?id=eq."+form.id,{method:"DELETE",headers:{Prefer:"return=minimal"}});
+      fecharSheet("#sheet"); toast("Lançamento excluído.");
+    }
+    await carregar();
   }catch(e){ $("#fMsg").innerHTML='<div class="msg err">'+e.message+'</div>'; }
 };
 

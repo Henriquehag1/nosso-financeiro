@@ -534,7 +534,7 @@ select.inp{appearance:none;background-image:linear-gradient(45deg,transparent 50
    A chave abaixo e publica de proposito: ela sozinha nao le nada.
    Quem decide o que cada pessoa enxerga e o proprio banco (RLS).
    ============================================================ */
-const VERSAO = "18";
+const VERSAO = "19";
 const SB  = "https://oihyhyyhessqnpkknhsi.supabase.co";
 const KEY = "sb_publishable_T7LERNVYS8mAK0tOlWfl5A_4-yCUjie";
 const LS_SESS = "nf.sessao", LS_FILA = "nf.fila", LS_CASAL = "nf.casal";
@@ -976,9 +976,10 @@ function pintarGrafCompromisso(r){
       + '<span class="media" style="left:'+(media/maior*100).toFixed(1)+'%"></span></div>'
       + '<div class="val">'+brl0(l.v)+'</div></div>';
   }).join("")
-  + '<div class="nota">Cada barra é o que já está contratado para sair naquele mês: contas fixas, '
-  + 'assinaturas e as parcelas de cartão já compradas. O tracinho cinza é a média dos doze meses, '
-  + brl0(media)+'. O mês mais pesado é <b style="color:var(--ink2)">'+nomeMes(pior.m)+'</b>, com '+brl0(pior.v)+'.</div>';
+  + '<div class="nota">A primeira barra, <b style="color:var(--ink2)">agora</b>, é o que <b style="color:var(--ink2)">ainda falta</b> '
+  + 'pagar em '+nomeMes(r.mes)+'. As outras são o mês inteiro: contas fixas, assinaturas e as parcelas de cartão já compradas. '
+  + 'O tracinho cinza é a média dos doze meses, '+brl0(media)+'. '
+  + 'O mês mais pesado é <b style="color:var(--ink2)">'+nomeMes(pior.m)+'</b>, com '+brl0(pior.v)+'.</div>';
   const info=$("#grafInfo");
   if(info) info.textContent = "12 meses";
 }
@@ -1389,7 +1390,13 @@ function pintarCartoes(){
     return `<div class="list" style="margin-bottom:10px">
       <div class="row tap" data-abrir="${c.nome}">
         <div class="mid"><div class="t">${c.nome}</div>
-          <div class="s">${c.dia_fechamento?"fecha dia "+c.dia_fechamento+" · ":""}vence dia ${c.dia_venc}${c.limite?" · limite "+brl0(c.limite):""} · ${rotulo(c.frente)}</div></div>
+          <div class="s">${c.dia_fechamento?"fecha dia "+c.dia_fechamento+" · ":""}vence dia ${c.dia_venc}${c.limite?" · limite "+brl0(c.limite):""} · ${rotulo(c.frente)}${(function(){
+              if(!c.dia_fechamento || mes!==hojeMes) return "";
+              const h=new Date().getDate(), d=c.dia_fechamento-h;
+              if(d===0) return ' · <b style="color:var(--warn)">fecha hoje</b>';
+              if(d>0 && d<=3) return ' · <b style="color:var(--warn)">fecha em '+d+(d===1?" dia":" dias")+'</b>';
+              return "";
+            })()}</div></div>
         <div class="amt ${f.pago?"in":""}">${f.pago?"paga":brl(f.total)}</div></div>
       ${aberto ? `
         <div class="row"><div class="mid"><div class="t" style="font-size:14px">Parcelas de ${nomeMes(mes)}</div></div>

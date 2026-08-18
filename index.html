@@ -19,6 +19,8 @@
   --bg:#151513; --surface:#1e1e1b; --surface2:#282824; --line:#37372f;
   --ink:#f6f3ea; --ink2:#a8a89f; --ink3:#76766d;
   --good:#4cbf58; --warn:#e5a92b; --bad:#e06a5f; --blue:#5b9bea; --gold:#c9a227;
+  /* serie de grafico: par validado para daltonismo sobre o fundo escuro */
+  --serieEntra:#5b9bea; --serieSai:#c9a227;
   --safe-top:env(safe-area-inset-top); --safe-bot:env(safe-area-inset-bottom);
 }
 *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
@@ -87,6 +89,24 @@ header{padding:14px 0 8px}
 body.travada .dock{display:none}
 .grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:6px}
 .card{background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:14px}
+/* ---------- graficos ---------- */
+.graf{margin-top:2px}
+.graf .gr{display:grid;grid-template-columns:44px 1fr auto;align-items:center;gap:10px;padding:5px 0}
+.graf .gr .mes{font-size:12px;color:var(--ink2);letter-spacing:.02em}
+.graf .gr.hoje .mes{color:var(--ink);font-weight:700}
+.graf .trilho{position:relative;height:14px;background:var(--surface2);border-radius:4px;overflow:hidden}
+.graf .trilho i{position:absolute;left:0;top:0;bottom:0;border-radius:0 4px 4px 0;display:block}
+.graf .val{font-size:12px;color:var(--ink2);font-variant-numeric:tabular-nums;min-width:62px;text-align:right}
+.graf .gr.hoje .val{color:var(--ink);font-weight:600}
+.graf .par{display:flex;flex-direction:column;gap:2px}
+.graf .par .trilho{height:9px}
+.graf .media{position:absolute;top:-3px;bottom:-3px;width:2px;background:var(--ink3);border-radius:1px}
+.graf .nota{font-size:12px;color:var(--ink3);line-height:1.5;margin:10px 2px 0}
+.graf .eixo{display:flex;justify-content:space-between;font-size:11px;color:var(--ink3);margin:2px 0 8px;padding-left:54px}
+.legenda2{display:flex;gap:14px;font-size:12px;color:var(--ink2);align-items:center}
+.legenda2 span{display:flex;align-items:center;gap:5px}
+.legenda2 i{width:9px;height:9px;border-radius:2px;display:inline-block}
+
 .card.full{grid-column:1/-1}
 .card.abre{position:relative}
 .card.abre::after{content:"\203a";position:absolute;right:14px;top:14px;color:var(--ink3);font-size:20px;line-height:1}
@@ -226,6 +246,12 @@ select.inp{appearance:none;background-image:linear-gradient(45deg,transparent 50
 
     <div class="sechead" id="tetoHead"><h2 class="sec">Quanto ainda dá para gastar</h2><span class="add" id="tetoAbrir">ajustar</span></div>
     <div class="list" id="tetosBarras"></div>
+
+    <div class="sechead" id="grafHead"><h2 class="sec">O que já está comprometido</h2><span class="add" id="grafInfo" style="color:var(--ink3)"></span></div>
+    <div class="card full graf" id="grafCompromisso"></div>
+
+    <div class="sechead hide" id="fluxoHead"><h2 class="sec">Entrou e saiu, mês a mês</h2><span class="add" style="color:var(--ink3)" id="fluxoLegenda"></span></div>
+    <div class="card full graf hide" id="grafFluxo"></div>
 
     <div class="sechead"><h2 class="sec">Entradas e saídas</h2><span class="add" style="color:var(--ink3)">toque para editar</span></div>
     <div class="list" id="eventos"></div>
@@ -416,6 +442,22 @@ select.inp{appearance:none;background-image:linear-gradient(45deg,transparent 50
 </div>
 
 <!-- ================= CARTÕES ================= -->
+<div class="sheet hide" id="sheetConf">
+  <div class="panel">
+    <div class="handle"></div>
+    <h3 id="cfTitulo">Conferir com a fatura do banco</h3>
+    <p style="color:var(--ink2);font-size:14px;margin:0 0 12px" id="cfNota"></p>
+    <div class="lbl" style="margin-top:0">Total da fatura, como veio do banco</div>
+    <input class="valor" id="cfValor" inputmode="decimal" placeholder="0,00">
+    <div id="cfResultado"></div>
+    <div id="cfMsg"></div>
+    <div style="height:20px"></div>
+    <button class="btn" id="cfSalvar">Salvar conferência</button>
+    <div style="height:10px"></div>
+    <button class="btn ghost" id="cfCancelar">Fechar</button>
+  </div>
+</div>
+
 <div class="sheet hide" id="sheetFech">
   <div class="panel">
     <div class="handle"></div>
@@ -492,7 +534,7 @@ select.inp{appearance:none;background-image:linear-gradient(45deg,transparent 50
    A chave abaixo e publica de proposito: ela sozinha nao le nada.
    Quem decide o que cada pessoa enxerga e o proprio banco (RLS).
    ============================================================ */
-const VERSAO = "17";
+const VERSAO = "18";
 const SB  = "https://oihyhyyhessqnpkknhsi.supabase.co";
 const KEY = "sb_publishable_T7LERNVYS8mAK0tOlWfl5A_4-yCUjie";
 const LS_SESS = "nf.sessao", LS_FILA = "nf.fila", LS_CASAL = "nf.casal";
@@ -622,23 +664,30 @@ async function abrirApp(){
   $("#dock").classList.remove("hide");
   montarLentes(); await carregar(); pintarFila(); escoarFila(); checarVersao(true);
 }
+/* Janela de eventos que o app carrega: 12 meses para tras.
+   Para frente nao ha limite, porque parcela futura precisa aparecer inteira. */
+function janelaInicio(){
+  const d=new Date(); d.setMonth(d.getMonth()-12);
+  return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-01";
+}
 async function carregar(){
   const mes = mesRef();
   try{
-    const [membro,cat,contas,parcelas,saldos,eventos,pagos,cartoes] = await Promise.all([
+    const [membro,cat,contas,parcelas,saldos,eventos,pagos,cartoes,conferidas] = await Promise.all([
       rest("membro?select=user_id,nome,papel,casal_id"),
       rest("categoria?select=id,pai,filho,tipo,frentes,ativo,teto&ativo=is.true&order=pai.asc,filho.asc"),
       rest("conta_fixa?select=id,descricao,valor,dia,frente,cartao,periodicidade,mes_venc,varia&ativo=is.true&order=dia.asc"),
       rest("parcela_futura?select=id,cartao,mes_ref,valor,frente,pago&order=mes_ref.asc"),
       rest("conta_saldo?select=id,nome,frente,tipo,valor&order=valor.desc"),
-      rest("evento?select=id,data,valor,tipo,frente,descricao,forma,cartao,categoria_id,origem,obs,criado_por,parcelas,parcela_num,grupo&order=data.desc,criado_em.desc&limit=150"),
+      rest("evento?select=id,data,valor,tipo,frente,descricao,forma,cartao,categoria_id,origem,obs,criado_por,parcelas,parcela_num,grupo&data=gte."+janelaInicio()+"&order=data.desc,criado_em.desc&limit=2000"),
       rest("pagamento_conta?select=conta_fixa_id,mes_ref,valor&mes_ref=eq."+mes),
-      rest("cartao?select=id,nome,dia_venc,dia_fechamento,limite,frente&ativo=is.true&order=nome.asc")
+      rest("cartao?select=id,nome,dia_venc,dia_fechamento,limite,frente&ativo=is.true&order=nome.asc"),
+      rest("fatura_conferida?select=id,cartao,mes_ref,valor_real,valor_app")
     ]);
     const meuId = sessao && sessao.user ? sessao.user.id : null;
     eu = (membro||[]).find(m=>m.user_id===meuId) || (membro && membro[0]) || {nome:"",papel:"parceiro"};
     if(eu.casal_id){ casalCache = eu.casal_id; try{ localStorage.setItem(LS_CASAL,eu.casal_id); }catch(e){} }
-    dados={cat,contas,parcelas,saldos,eventos,pagos,cartoes,membros:membro||[],cartoesLista:cartoes.map(c=>c.nome)};
+    dados={cat,contas,parcelas,saldos,eventos,pagos,cartoes,conferidas:conferidas||[],membros:membro||[],cartoesLista:cartoes.map(c=>c.nome)};
     ultimaCarga = Date.now();
     $("#btnSair").textContent = (eu.nome||"") + " · sair";
     montarLentes(); pintar();
@@ -718,7 +767,8 @@ function resumo(){
   const faturaAberta = parc.filter(p=>p.mes_ref===mes&&!p.pago).reduce((a,p)=>a+ +p.valor,0);
   const proxMes = mesSeguinte(mes);
   const faturaProx = parc.filter(p=>p.mes_ref===proxMes).reduce((a,p)=>a+ +p.valor,0);
-  const evs = filtra(dados.eventos).filter(e=>e.data>=mes);
+  const fimMes = mesSeguinte(mes);
+  const evs = filtra(dados.eventos).filter(e=>e.data>=mes && e.data<fimMes);
   const gastoMes = evs.filter(e=>e.tipo==="gasto").reduce((a,e)=>a+ +e.valor,0);
   const entradaMes = evs.filter(e=>e.tipo==="entrada").reduce((a,e)=>a+ +e.valor,0);
   const pagosIds = new Set(dados.pagos.map(p=>p.conta_fixa_id));
@@ -735,7 +785,9 @@ function resumo(){
   const compromissoDoMes = (m)=>{
     const fixas = contas.filter(c=>cobraNesteMes(c,m)).reduce((a,c)=>a+ +c.valor,0);
     const parcelas = parc.filter(p=>p.mes_ref===m && !p.pago).reduce((a,p)=>a+ +p.valor,0);
-    return fixas + parcelas;
+    /* compras avulsas ja lancadas que caem na fatura daquele mes */
+    const avulsas = cartoesVisiveis().reduce((a,c)=>a+comprasNoMes(c.nome,m),0);
+    return fixas + parcelas + avulsas;
   };
   const calcFolego = (inicial)=>{
     let saldo = inicial, m = mes, meses = 0;
@@ -858,6 +910,8 @@ function pintar(){
   $("#selo").textContent = selo();
 
   pintarTetos(r);
+  pintarGrafCompromisso(r);
+  pintarGrafFluxo();
   pintarExtrato();
   $("#rodape").textContent = (eu&&eu.papel==="dono"?"Você vê as três frentes.":"Você vê o casal e a confeitaria.")
     +" Cards com seta abrem a lista. Versão "+VERSAO+".";
@@ -899,6 +953,69 @@ function pintarTetos(r){
   lista.querySelectorAll("[data-tt]").forEach(el=>el.onclick=()=>abrirTeto(+el.dataset.tt));
 }
 $("#tetoAbrir").onclick=()=>abrirLista("tetos");
+
+
+/* ---------------- graficos ---------------- */
+/* Serie unica: o que ja esta contratado para sair em cada um dos proximos 12 meses.
+   Uma cor so, entao nao precisa de legenda; o titulo nomeia a serie. */
+function pintarGrafCompromisso(r){
+  const box=$("#grafCompromisso"); if(!box) return;
+  const linhas=[]; let m=r.mes;
+  for(let i=0;i<12;i++){
+    linhas.push({m, v:(i===0? r.faltaTotal : r.compromissoDoMes(m)), hoje:i===0});
+    m=mesSeguinte(m);
+  }
+  const maior=Math.max(1,...linhas.map(l=>l.v));
+  const media=linhas.reduce((a,l)=>a+l.v,0)/linhas.length;
+  const pior=linhas.slice().sort((a,b)=>b.v-a.v)[0];
+  box.innerHTML = linhas.map(l=>{
+    const pct=Math.max(1.5, l.v/maior*100);
+    return '<div class="gr'+(l.hoje?' hoje':'')+'">'
+      + '<div class="mes">'+(l.hoje?'agora':nomeMes(l.m))+'</div>'
+      + '<div class="trilho"><i style="width:'+pct.toFixed(1)+'%;background:var(--serieSai)"></i>'
+      + '<span class="media" style="left:'+(media/maior*100).toFixed(1)+'%"></span></div>'
+      + '<div class="val">'+brl0(l.v)+'</div></div>';
+  }).join("")
+  + '<div class="nota">Cada barra é o que já está contratado para sair naquele mês: contas fixas, '
+  + 'assinaturas e as parcelas de cartão já compradas. O tracinho cinza é a média dos doze meses, '
+  + brl0(media)+'. O mês mais pesado é <b style="color:var(--ink2)">'+nomeMes(pior.m)+'</b>, com '+brl0(pior.v)+'.</div>';
+  const info=$("#grafInfo");
+  if(info) info.textContent = "12 meses";
+}
+
+/* Duas series: entrou e saiu de verdade, mes a mes. So meses com movimento. */
+function pintarGrafFluxo(){
+  const head=$("#fluxoHead"), box=$("#grafFluxo"), leg=$("#fluxoLegenda");
+  if(!box) return;
+  const evs=filtra(dados.eventos);
+  const porMes={};
+  evs.forEach(e=>{
+    if(e.data>hojeISO()) return;              /* nada de parcela futura aqui */
+    const k=e.data.slice(0,7)+"-01";
+    porMes[k]=porMes[k]||{e:0,s:0};
+    if(e.tipo==="entrada") porMes[k].e+= +e.valor; else porMes[k].s+= +e.valor;
+  });
+  const meses=Object.keys(porMes).sort();
+  if(meses.length<1){ head.classList.add("hide"); box.classList.add("hide"); return; }
+  head.classList.remove("hide"); box.classList.remove("hide");
+  const maior=Math.max(1,...meses.map(k=>Math.max(porMes[k].e,porMes[k].s)));
+  const mesAtual=mesRef();
+  box.innerHTML = meses.map(k=>{
+    const d=porMes[k], liq=d.e-d.s;
+    return '<div class="gr'+(k===mesAtual?' hoje':'')+'">'
+      + '<div class="mes">'+nomeMes(k)+'</div>'
+      + '<div class="par">'
+        + '<div class="trilho"><i style="width:'+Math.max(1,d.e/maior*100).toFixed(1)+'%;background:var(--serieEntra)"></i></div>'
+        + '<div class="trilho"><i style="width:'+Math.max(1,d.s/maior*100).toFixed(1)+'%;background:var(--serieSai)"></i></div>'
+      + '</div>'
+      + '<div class="val" style="color:'+(liq>=0?"var(--good)":"var(--bad)")+'">'
+        + (liq>=0?"+":"\u2212")+brl0(Math.abs(liq))+'</div></div>';
+  }).join("")
+  + '<div class="nota">A barra de cima é o que entrou, a de baixo é o que saiu, dos lançamentos de vocês. '
+  + 'O número da direita é a sobra do mês. Contas fixas pagas fora do app não entram aqui.</div>';
+  if(leg) leg.innerHTML = '<span class="legenda2"><span><i style="background:var(--serieEntra)"></i>entrou</span>'
+                        + '<span><i style="background:var(--serieSai)"></i>saiu</span></span>';
+}
 
 /* ---------------- extrato ---------------- */
 function nomeDe(uid){
@@ -1290,6 +1407,19 @@ function pintarCartoes(){
           ${f.parcelaId? `<button class="chip ${f.pago?"on":""}" data-pagar="${f.parcelaId}">${f.pago?"paga":"marcar paga"}</button>`:""}</div>
         <div class="row"><div class="mid"><div class="t" style="font-size:14px">Ainda deve, até a última parcela</div></div>
           <div class="amt" style="font-size:14px">${brl(restante)}</div></div>
+        ${(function(){
+            const cf=(dados.conferidas||[]).find(x=>x.cartao===c.nome && x.mes_ref===mes);
+            const dif = cf ? (+cf.valor_real - f.total) : 0;
+            const bate = cf && Math.abs(dif)<0.02;
+            return `<div class="row tap" data-conf="${c.nome}">
+              <div class="mid"><div class="t" style="font-size:14px">${cf?"Conferido com o banco":"Conferir com a fatura do banco"}</div>
+                <div class="s" style="color:${!cf?"var(--ink3)":bate?"var(--good)":"var(--bad)"}">${
+                  !cf ? "toque e digite o total que o banco cobrou"
+                      : bate ? "bate certinho com o que o app calculou"
+                      : (dif>0? "o banco cobrou "+brl(dif)+" a mais que o app previu"
+                              : "o banco cobrou "+brl(-dif)+" a menos que o app previu")}</div></div>
+              <div class="amt" style="font-size:14px;color:${!cf?"var(--ink3)":bate?"var(--good)":"var(--bad)"}">${cf?brl(cf.valor_real):"\u2014"}</div></div>`;
+          })()}
         ${futuros.map(p=>`<div class="row" style="padding-left:28px">
             <div class="mid"><div class="t" style="font-size:13px;color:var(--ink2)">${nomeMes(p.mes_ref)}</div>
               <div class="bar"><i style="width:${(+p.valor/maior*100).toFixed(1)}%"></i></div></div>
@@ -1297,6 +1427,9 @@ function pintarCartoes(){
       ` : ""}
     </div>`;
   }).join("");
+  $("#cdLista").querySelectorAll("[data-conf]").forEach(el=>el.onclick=(ev)=>{
+    ev.stopPropagation(); abrirConferencia(el.dataset.conf);
+  });
   $("#cdLista").querySelectorAll("[data-fech]").forEach(el=>el.onclick=(ev)=>{
     ev.stopPropagation(); abrirFechamento(el.dataset.fech);
   });
@@ -1315,6 +1448,51 @@ function pintarCartoes(){
   });
 }
 $("#cdFechar").onclick=()=>fecharSheet("#sheetCartoes");
+
+let confCartao=null, confMes=null;
+function abrirConferencia(nome){
+  const mes = cdMes || mesRef();
+  const f = fatura(nome, mes);
+  const cf = (dados.conferidas||[]).find(x=>x.cartao===nome && x.mes_ref===mes);
+  confCartao=nome; confMes=mes;
+  $("#cfTitulo").textContent = nome+", "+nomeMes(mes);
+  $("#cfNota").innerHTML = "O app calculou <b>"+brl(f.total)+"</b> para esta fatura: "
+    + brl0(f.parcelas)+" de parcelas, "+brl0(f.assinaturas)+" de assinaturas e "+brl0(f.compras)+" de compras lançadas.<br>"
+    + "Abra a fatura no app do banco e escreva aqui o total cobrado. Se os dois baterem, o sistema está confiável para este cartão.";
+  $("#cfValor").value = cf ? num(cf.valor_real) : "";
+  $("#cfMsg").innerHTML=""; $("#cfResultado").innerHTML="";
+  mostrarDifConf();
+  abrirSheet("#sheetConf");
+  setTimeout(()=>$("#cfValor").focus(),120);
+}
+function mostrarDifConf(){
+  const el=$("#cfResultado"); if(!el||!confCartao) return;
+  const v=parseNum($("#cfValor").value);
+  if(!(v>0)){ el.innerHTML=""; return; }
+  const f=fatura(confCartao, confMes), dif=v-f.total;
+  if(Math.abs(dif)<0.02){
+    el.innerHTML='<div class="msg ok" style="margin-top:12px">Bate certinho. Diferença de zero.</div>';
+  }else{
+    el.innerHTML='<div class="msg '+(Math.abs(dif)>f.total*0.05?"err":"info")+'" style="margin-top:12px">'
+      + 'Diferença de <b>'+brl(Math.abs(dif))+'</b>, o banco cobrou '+(dif>0?"mais":"menos")+' que o app previu. '
+      + 'Vale abrir a fatura e ver o que está lá e não foi lançado aqui'+(dif<0?", ou o que foi lançado aqui e não caiu nessa fatura":"")+'.</div>';
+  }
+}
+$("#cfValor").addEventListener("input",mostrarDifConf);
+$("#cfCancelar").onclick=()=>fecharSheet("#sheetConf");
+$("#cfSalvar").onclick=async()=>{
+  const v=parseNum($("#cfValor").value);
+  if(!(v>0)){ $("#cfMsg").innerHTML='<div class="msg err">Escreva o total da fatura.</div>'; return; }
+  try{
+    const casal=await meuCasal();
+    const f=fatura(confCartao, confMes);
+    await rest("fatura_conferida",{method:"POST",
+      headers:{Prefer:"resolution=merge-duplicates,return=minimal"},
+      body:JSON.stringify({casal_id:casal, cartao:confCartao, mes_ref:confMes,
+                           valor_real:+v.toFixed(2), valor_app:+f.total.toFixed(2)})});
+    fecharSheet("#sheetConf"); toast("Conferência salva."); await carregar(); pintarCartoes();
+  }catch(e){ $("#cfMsg").innerHTML='<div class="msg err">'+e.message+'</div>'; }
+};
 
 let fechEd=null;
 function abrirFechamento(nome){
@@ -1533,10 +1711,43 @@ $("#btnAtualizar").onclick=async()=>{
   } finally { $("#btnAtualizar").textContent="↻"; }
 };
 
+/* ---- guardas de digitacao: duplicata e valor fora do padrao ---- */
+function avisoDuplicata(valor, data, catId, desc){
+  const igual = dados.eventos.filter(e=>e.data===data && Math.abs(+e.valor-valor)<0.005
+                 && e.categoria_id===catId && (e.parcelas||1)===1);
+  if(!igual.length) return null;
+  return "Já existe "+(igual.length===1?"um lançamento igual":igual.length+" lançamentos iguais")
+       + " hoje: "+brl(valor)+" em "+nomeCat(dados.cat.find(c=>c.id===catId))
+       + ". Se for outro de verdade, toque de novo em Salvar.";
+}
+function avisoValor(valor, catId, tipo){
+  if(tipo!=="gasto") return null;
+  const hist = dados.eventos.filter(e=>e.tipo==="gasto" && e.categoria_id===catId && (e.parcelas||1)===1)
+                            .map(e=>+e.valor).sort((a,b)=>a-b);
+  if(hist.length<5) return null;
+  const mediana = hist[Math.floor(hist.length/2)];
+  if(mediana<=0) return null;
+  if(valor > mediana*10) return "Esse valor é bem maior que o normal dessa categoria (costuma ser perto de "+brl(mediana)+"). Confere o valor e toque de novo em Salvar.";
+  if(valor < mediana/10) return "Esse valor é bem menor que o normal dessa categoria (costuma ser perto de "+brl(mediana)+"). Faltou um dígito? Toque de novo em Salvar se estiver certo.";
+  return null;
+}
+let confirmando=null;
 $("#fSalvar").onclick = async ()=>{
   const valor=parseNum($("#fValor").value);
   if(!valor||valor<=0){ $("#fMsg").innerHTML='<div class="msg err">Escreva um valor maior que zero.</div>'; return; }
   if(!form.catId){ $("#fMsg").innerHTML='<div class="msg err">Escolha uma categoria.</div>'; return; }
+  if(!form.id){
+    const dataEv=$("#fData").value||hojeISO();
+    const assinatura=[dataEv,valor.toFixed(2),form.catId].join("|");
+    const aviso = avisoDuplicata(valor,dataEv,form.catId,$("#fDesc").value)
+               || avisoValor(valor,form.catId,form.tipo);
+    if(aviso && confirmando!==assinatura){
+      confirmando=assinatura;
+      $("#fMsg").innerHTML='<div class="msg info">'+aviso+'</div>';
+      return;
+    }
+    confirmando=null;
+  }
   const corpo={ data:$("#fData").value||hojeISO(), valor:+valor.toFixed(2), tipo:form.tipo,
     frente:form.frente||"casa", categoria_id:form.catId, descricao:$("#fDesc").value.trim()||null,
     forma:form.forma, cartao:form.cartao,

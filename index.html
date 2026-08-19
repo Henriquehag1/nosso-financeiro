@@ -534,7 +534,7 @@ select.inp{appearance:none;background-image:linear-gradient(45deg,transparent 50
    A chave abaixo e publica de proposito: ela sozinha nao le nada.
    Quem decide o que cada pessoa enxerga e o proprio banco (RLS).
    ============================================================ */
-const VERSAO = "19";
+const VERSAO = "20";
 const SB  = "https://oihyhyyhessqnpkknhsi.supabase.co";
 const KEY = "sb_publishable_T7LERNVYS8mAK0tOlWfl5A_4-yCUjie";
 const LS_SESS = "nf.sessao", LS_FILA = "nf.fila", LS_CASAL = "nf.casal";
@@ -1738,7 +1738,38 @@ function avisoValor(valor, catId, tipo){
   if(valor < mediana/10) return "Esse valor é bem menor que o normal dessa categoria (costuma ser perto de "+brl(mediana)+"). Faltou um dígito? Toque de novo em Salvar se estiver certo.";
   return null;
 }
+/* Se o que voce esta lancando parece uma conta fixa que ainda esta em aberto
+   neste mes, o certo nao e lancar: e marcar aquela conta como paga. Lancar
+   faria o valor contar como gasto variavel e a conta continuaria "a pagar". */
+function palavras(t){ return String(t||"").toLowerCase()
+  .normalize("NFD").replace(/[\u0300-\u036f]/g,"")
+  .split(/[^a-z0-9]+/).filter(w=>w.length>3); }
+function contasFixasParecidas(valor, frente, desc){
+  const mes=mesRef(), pagos=new Set(dados.pagos.map(p=>p.conta_fixa_id));
+  const pd=palavras(desc);
+  return (dados.contas||[]).filter(c=>{
+    if(c.cartao) return false;                         /* cartao se paga na fatura */
+    if(!cobraNesteMes(c,mes)) return false;
+    if(pagos.has(c.id)) return false;
+    if(frente && c.frente!==frente) return false;
+    const perto = Math.abs(valor - (+c.valor)) <= Math.max(1, (+c.valor)*0.15);
+    const pc = palavras(c.descricao);
+    const nome = pd.length>0 && pc.some(w=>pd.includes(w));
+    return perto || nome;
+  }).slice(0,3);
+}
 let confirmando=null;
+async function marcarFixaDoLancamento(id, valorReal){
+  const mes=mesRef();
+  try{
+    const casal=await meuCasal();
+    await rest("pagamento_conta",{method:"POST",headers:{Prefer:"return=minimal"},
+      body:JSON.stringify({casal_id:casal, conta_fixa_id:id, mes_ref:mes, valor:+valorReal.toFixed(2)})});
+    fecharSheet("#sheet");
+    toast("Conta fixa marcada como paga. Não lancei nada, para não contar duas vezes.");
+    await carregar();
+  }catch(e){ $("#fMsg").innerHTML='<div class="msg err">'+e.message+'</div>'; }
+}
 $("#fSalvar").onclick = async ()=>{
   const valor=parseNum($("#fValor").value);
   if(!valor||valor<=0){ $("#fMsg").innerHTML='<div class="msg err">Escreva um valor maior que zero.</div>'; return; }
@@ -1746,6 +1777,20 @@ $("#fSalvar").onclick = async ()=>{
   if(!form.id){
     const dataEv=$("#fData").value||hojeISO();
     const assinatura=[dataEv,valor.toFixed(2),form.catId].join("|");
+    if(form.tipo==="gasto" && (form.parcelas||1)===1){
+      const fx=contasFixasParecidas(valor, form.frente, $("#fDesc").value);
+      if(fx.length && confirmando!==assinatura){
+        confirmando=assinatura;
+        $("#fMsg").innerHTML='<div class="msg info">Isso parece uma <b>conta fixa que ainda está em aberto</b> neste mês. '
+          + 'Se for ela, marque como paga; lançar faria o valor contar como gasto novo e a conta continuaria devendo.'
+          + '<div style="margin-top:10px;display:flex;flex-direction:column;gap:6px">'
+          + fx.map(c=>'<button class="chip" data-fx="'+c.id+'" style="text-align:left">marcar paga: '
+              + c.descricao+' · '+brl(c.valor)+'</button>').join("")
+          + '</div><div style="margin-top:8px;color:var(--ink3)">Se for outra coisa mesmo, toque de novo em Salvar.</div></div>';
+        $("#fMsg").querySelectorAll("[data-fx]").forEach(b=>b.onclick=()=>marcarFixaDoLancamento(+b.dataset.fx, valor));
+        return;
+      }
+    }
     const aviso = avisoDuplicata(valor,dataEv,form.catId,$("#fDesc").value)
                || avisoValor(valor,form.catId,form.tipo);
     if(aviso && confirmando!==assinatura){

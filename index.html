@@ -542,10 +542,10 @@ select.inp{appearance:none;background-image:linear-gradient(45deg,transparent 50
    A chave abaixo e publica de proposito: ela sozinha nao le nada.
    Quem decide o que cada pessoa enxerga e o proprio banco (RLS).
    ============================================================ */
-const VERSAO = "21";
+const VERSAO = "22";
 const SB  = "https://oihyhyyhessqnpkknhsi.supabase.co";
 const KEY = "sb_publishable_T7LERNVYS8mAK0tOlWfl5A_4-yCUjie";
-const LS_SESS = "nf.sessao", LS_FILA = "nf.fila", LS_CASAL = "nf.casal";
+const LS_SESS = "nf.sessao", LS_FILA = "nf.fila", LS_CASAL = "nf.casal", LS_REJ = "nf.recusados";
 
 const FRENTES = [
   {id:"tudo", nome:"Tudo"}, {id:"casa", nome:"Casal"},
@@ -570,7 +570,29 @@ const $ = s=>document.querySelector(s);
 const brl = v => (v<0?"-":"")+"R$ "+Math.abs(Number(v)||0).toLocaleString("pt-BR",{minimumFractionDigits:2,maximumFractionDigits:2});
 const brl0= v => "R$ "+Math.round(Number(v)||0).toLocaleString("pt-BR");
 const num = v => (Number(v)||0).toLocaleString("pt-BR",{minimumFractionDigits:2,maximumFractionDigits:2});
-function parseNum(s){ return parseFloat(String(s||"").replace(/\./g,"").replace(",",".").replace(/[^0-9.\-]/g,"")); }
+/* Aceita 1.500,50 (pt-BR), 1500,50, 1500.50 e 3.83 sem trocar centavo por milhar.
+   Regra: se tem virgula, o ponto e milhar. Sem virgula, ponto com 3 digitos
+   depois e milhar (1.500), qualquer outro ponto e decimal (3.83, 1500.50). */
+function parseNum(s){
+  let t=String(s||"").trim().replace(/[^0-9.,\-]/g,"");
+  if(!t) return 0;
+  if(t.indexOf(",")>=0){
+    t=t.replace(/\./g,"").replace(",",".");
+  }else{
+    const p=t.split(".");
+    if(p.length>2) t=p.join("");
+    else if(p.length===2 && p[1].length===3 && p[0]!=="" && p[0]!=="-") t=p.join("");
+  }
+  const v=parseFloat(t);
+  return isNaN(v) ? 0 : v;
+}
+/* Soma meses sem estourar o dia: 31/01 + 1 mes = 28/02, nunca 03/03. */
+function somaMeses(iso,k){
+  const a=+iso.slice(0,4), m=+iso.slice(5,7), d=+iso.slice(8,10);
+  const t=(m-1)+k, ano=a+Math.floor(t/12), mes=((t%12)+12)%12+1;
+  const ult=new Date(ano, mes, 0).getDate();
+  return ano+"-"+String(mes).padStart(2,"0")+"-"+String(Math.min(d,ult)).padStart(2,"0");
+}
 function mesRef(d){ d=d||new Date(); return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-01"; }
 function hojeISO(){ const d=new Date(); return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0"); }
 function nomeMes(iso){ const [a,m]=iso.split("-"); return ["jan","fev","mar","abr","mai","jun","jul","ago","set","out","nov","dez"][+m-1]+"/"+a.slice(2); }
@@ -649,20 +671,61 @@ $("#btnSair").onclick = ()=>{ limparSessao(); location.reload(); };
 function lerFila(){ try{ return JSON.parse(localStorage.getItem(LS_FILA)||"[]"); }catch(e){ return []; } }
 function gravarFila(f){ try{ localStorage.setItem(LS_FILA,JSON.stringify(f)); }catch(e){} pintarFila(); }
 function pintarFila(){
-  const f=lerFila(), el=$("#filaAviso");
-  if(!f.length){ el.classList.add("hide"); return; }
+  const f=lerFila(), r=lerRej(), el=$("#filaAviso");
+  if(!f.length && !r.length){ el.classList.add("hide"); el.onclick=null; return; }
   el.classList.remove("hide");
-  el.textContent = f.length+(f.length===1?" lançamento guardado no aparelho, esperando internet":" lançamentos guardados no aparelho, esperando internet");
+  const partes=[];
+  if(f.length) partes.push(f.length+(f.length===1?" lançamento guardado no aparelho, esperando internet"
+                                                :" lançamentos guardados no aparelho, esperando internet"));
+  if(r.length) partes.push(r.length+(r.length===1?" lançamento foi recusado e não entrou, toque para ver"
+                                                 :" lançamentos foram recusados e não entraram, toque para ver"));
+  el.textContent = partes.join(" · ");
+  el.onclick = r.length ? function(){ mostrarRecusados(); } : null;
 }
-async function escoarFila(){
-  let f=lerFila(); if(!f.length) return;
-  const restam=[];
-  for(const ev of f){
-    try{ await rest("evento",{method:"POST",headers:{Prefer:"return=minimal"},body:JSON.stringify(ev)}); }
-    catch(e){ if(!(e.status>=400&&e.status<500&&e.status!==401)) restam.push(ev); }
+function mostrarRecusados(){
+  const r=lerRej(); if(!r.length) return;
+  const linhas=r.map(function(x){
+    const i=x.item||{};
+    return "· "+(i.descricao||"sem descrição")+" "+brl(i.valor)+" de "+(i.data||"?")+" — "+x.erro;
+  }).join("\n");
+  if(confirm("Estes lançamentos foram recusados pelo servidor e NÃO estão no sistema:\n\n"
+     + linhas + "\n\nAnote o que precisar e toque OK para limpar este aviso.")){
+    gravarRej([]); pintarFila();
   }
-  gravarFila(restam);
-  if(f.length!==restam.length) toast("Lançamentos guardados foram enviados.");
+}
+let escoando=false;
+function lerRej(){ try{ return JSON.parse(localStorage.getItem(LS_REJ)||"[]"); }catch(e){ return []; } }
+function gravarRej(f){ try{ localStorage.setItem(LS_REJ,JSON.stringify(f)); }catch(e){} }
+/* Envia um item por vez e regrava a fila a cada acerto, relendo do localStorage.
+   Assim nada e reenviado se o app morrer no meio, e nada que foi lancado
+   durante o escoamento e sobrescrito. Item recusado pelo servidor nao some:
+   vai para a lista de recusados e o usuario e avisado. */
+async function escoarFila(){
+  if(escoando) return;
+  escoando=true;
+  try{
+    let ok=0, rec=0, msgRec="";
+    for(let volta=0; volta<200; volta++){
+      const f=lerFila();
+      if(!f.length) break;
+      const ev=f[0];
+      try{
+        await rest("evento",{method:"POST",headers:{Prefer:"return=minimal"},body:JSON.stringify(ev)});
+        const g=lerFila(); g.shift(); gravarFila(g); ok++;
+      }catch(e){
+        if(e.status>=400 && e.status<500 && e.status!==401){
+          const g=lerFila(); const mau=g.shift(); gravarFila(g);
+          const r=lerRej(); r.push({item:mau, erro:e.message||("Erro "+e.status)}); gravarRej(r);
+          rec++; msgRec=e.message||("Erro "+e.status);
+        }else break;   /* rede caiu de novo: para e tenta na proxima */
+      }
+    }
+    if(ok) toast(ok===1 ? "1 lançamento guardado foi enviado." : ok+" lançamentos guardados foram enviados.");
+    if(rec) toast(rec===1
+      ? "1 lançamento foi recusado pelo servidor e NÃO entrou: "+msgRec
+      : rec+" lançamentos foram recusados pelo servidor e NÃO entraram: "+msgRec, true);
+    if(ok) await carregar();
+  } finally { escoando=false; pintarFila(); }
 }
 
 /* ---------------- carregar ---------------- */
@@ -686,7 +749,7 @@ async function carregar(){
       rest("categoria?select=id,pai,filho,tipo,frentes,ativo,teto&ativo=is.true&order=pai.asc,filho.asc"),
       rest("conta_fixa?select=id,descricao,valor,dia,frente,cartao,periodicidade,mes_venc,varia&ativo=is.true&order=dia.asc"),
       rest("parcela_futura?select=id,cartao,mes_ref,valor,frente,pago&order=mes_ref.asc"),
-      rest("conta_saldo?select=id,nome,frente,tipo,valor&order=valor.desc"),
+      rest("conta_saldo?select=id,nome,frente,tipo,valor,atualizado_em&order=valor.desc"),
       rest("evento?select=id,data,valor,tipo,frente,descricao,forma,cartao,categoria_id,origem,obs,criado_por,parcelas,parcela_num,grupo,criado_em&data=gte."+janelaInicio()+"&order=data.desc,criado_em.desc&limit=2000"),
       rest("pagamento_conta?select=conta_fixa_id,mes_ref,valor&mes_ref=eq."+mes),
       rest("cartao?select=id,nome,dia_venc,dia_fechamento,limite,frente&ativo=is.true&order=nome.asc"),
@@ -695,7 +758,7 @@ async function carregar(){
     const meuId = sessao && sessao.user ? sessao.user.id : null;
     eu = (membro||[]).find(m=>m.user_id===meuId) || (membro && membro[0]) || {nome:"",papel:"parceiro"};
     if(eu.casal_id){ casalCache = eu.casal_id; try{ localStorage.setItem(LS_CASAL,eu.casal_id); }catch(e){} }
-    dados={cat,contas,parcelas,saldos,eventos,pagos,cartoes,conferidas:conferidas||[],membros:membro||[],cartoesLista:cartoes.map(c=>c.nome)};
+    dados={mesCarga:mes,cat,contas,parcelas,saldos,eventos,pagos,cartoes,conferidas:conferidas||[],membros:membro||[],cartoesLista:cartoes.map(c=>c.nome)};
     ultimaCarga = Date.now();
     $("#btnSair").textContent = (eu.nome||"") + " · sair";
     montarLentes(); pintar();
@@ -852,7 +915,14 @@ function selo(){
 }
 setInterval(()=>{ const el=$("#selo"); if(el) el.textContent = selo(); }, 30000);
 
+let recarregandoMes=false;
 function pintar(){
+  /* O mes dos pagamentos e buscado no carregar(). Se o app ficou aberto e virou
+     o mes, esse recorte fica velho e as contas do mes novo apareceriam como pagas. */
+  if(dados.mesCarga && dados.mesCarga!==mesRef() && !recarregandoMes){
+    recarregandoMes=true;
+    carregar().finally(function(){ recarregandoMes=false; });
+  }
   const r=resumo();
   const nomeLente=(FRENTES.find(f=>f.id===lente)||{}).nome;
   const mesAtual=mesRef();
@@ -863,7 +933,41 @@ function pintar(){
   const hoje=new Date(), diaHoje=hoje.getDate();
   const emFechamento = diaHoje<=8 && r.doBanco.some(c=>!r.pagosIds.has(c.id));
 
+  /* ---- o que passou e ninguem marcou. So aparece quando existe. ---- */
+  const alertas=[];
+  (function(){
+    const atrasadasFix = r.doBanco.filter(c=>!r.pagosIds.has(c.id) && c.dia < diaHoje);
+    if(atrasadasFix.length){
+      const soma=atrasadasFix.reduce((a,c)=>a+ +c.valor,0);
+      alertas.push({p:"contas", t:atrasadasFix.length+(atrasadasFix.length===1?" conta já venceu":" contas já venceram")
+        +" e não foram marcadas", v:soma, d:atrasadasFix.slice(0,3).map(c=>c.descricao+" dia "+c.dia).join(" · ")});
+    }
+    const fatVelhas = r.parc.filter(x=>x.mes_ref<mesAtual && !x.pago && +x.valor>0);
+    if(fatVelhas.length){
+      const soma=fatVelhas.reduce((a,x)=>a+ +x.valor,0);
+      alertas.push({p:"cartoes", t:fatVelhas.length+(fatVelhas.length===1?" fatura de mês passado":" faturas de meses passados")
+        +" continua em aberto".replace("continua", fatVelhas.length===1?"continua":"continuam"), v:soma,
+        d:fatVelhas.slice(0,3).map(x=>x.cartao+" "+nomeMes(x.mes_ref)).join(" · ")+" · isso ainda soma na dívida"});
+    }
+    const paradas=(r.saldos||[]).filter(x=>{
+      if(!x.atualizado_em) return false;
+      const d=new Date(x.atualizado_em); if(isNaN(d)) return false;
+      return (Date.now()-d.getTime())/86400000 >= 30;
+    });
+    if(paradas.length){
+      alertas.push({p:"saldos", t:paradas.length+(paradas.length===1?" conta não é conferida":" contas não são conferidas")
+        +" há mais de 30 dias", v:paradas.reduce((a,x)=>a+ +x.valor,0),
+        d:paradas.slice(0,3).map(x=>x.nome).join(" · ")+" · o caixa e o fôlego saem daqui"});
+    }
+  })();
+
   $("#cards").innerHTML = `
+    ${alertas.length ? alertas.map(a=>`
+    <div class="card full abre" data-p="${a.p}" style="border-color:var(--warn)">
+      <div class="k" style="color:var(--warn)">CONFERIR</div>
+      <div class="v warn" style="font-size:19px">${a.t}</div>
+      <div class="n">${brl(a.v)} · ${a.d}</div></div>`).join("") : ""}
+
     <div class="card full abre" data-p="saldos">
       <div class="k">DINHEIRO EM CAIXA${lente==="tudo"?"":" \u00b7 "+nomeLente.toUpperCase()}</div>
       <div class="v ${r.caixa>0?"good":"bad"}">${brl(r.caixa)}</div>
@@ -1089,7 +1193,7 @@ function pintarExtrato(){
     });
   }
   var todos=ordenaExtrato(filtra(dados.eventos));
-  var lim = extratoTudo ? 400 : 40;
+  var lim = extratoTudo ? todos.length : 40;
   var evs = todos.slice(0, lim);
   if(!evs.length){
     $("#eventos").innerHTML='<div class="empty">Nada lançado ainda. Toque em Lançar.</div>';
@@ -1139,8 +1243,8 @@ function pintarExtrato(){
       + (e.tipo==="entrada"?"+":"−")+num(e.valor)+'</div></div>';
   });
   if(todos.length>evs.length){
-    html += '<button class="vermais" id="verMais">ver mais '
-         + Math.min(todos.length-evs.length, 400-evs.length)+' lançamentos</button>';
+    const restam = todos.length-evs.length;
+    html += '<button class="vermais" id="verMais">ver mais '+restam+' lançamento'+(restam===1?"":"s")+'</button>';
   }
   $("#eventos").innerHTML=html;
   $("#eventos").querySelectorAll("[data-ev]").forEach(function(el){
@@ -1168,10 +1272,18 @@ function abrirLista(qual){
       + (aReceber.length? ", mais <b>"+brl(soma(aReceber))+"</b> que ainda vai cair" : "")
       + ". Toque em qualquer linha para corrigir o valor.";
     add.textContent="+ conta"; add.onclick=()=>{ fecharSheet("#sheetLista"); abrirSaldo(null); };
-    const linhaS=(s)=>'<div class="row tap" data-saldo="'+s.id+'">'
-      + '<div class="mid"><div class="t">'+s.nome+'</div>'
-      + '<div class="s">'+(NOMETIPO[s.tipo]||s.tipo)+' · '+rotulo(s.frente)+'</div></div>'
+    const diasDe=(iso)=>{ if(!iso) return null; const d=new Date(iso); if(isNaN(d)) return null;
+      return Math.floor((Date.now()-d.getTime())/86400000); };
+    const linhaS=(s)=>{
+      const dias=diasDe(s.atualizado_em);
+      const velho = dias!=null && dias>=30;
+      return '<div class="row tap" data-saldo="'+s.id+'">'
+      + '<div class="mid"><div class="t">'+(velho?'<span style="color:var(--warn);font-weight:700">!</span> ':'')+s.nome+'</div>'
+      + '<div class="s"'+(velho?' style="color:var(--warn)"':'')+'>'+(NOMETIPO[s.tipo]||s.tipo)+' · '+rotulo(s.frente)
+      + (dias==null ? "" : dias===0 ? " · conferido hoje" : dias===1 ? " · conferido ontem" : " · conferido há "+dias+" dias")
+      + '</div></div>'
       + '<div class="amt'+(s.tipo==="a_receber"?'':(+s.valor>0?' in':''))+'">'+brl(s.valor)+'</div></div>';
+    };
     const bloco=(titulo,arr,cor)=> arr.length
       ? '<div class="sechead" style="margin:14px 0 8px"><h2 class="sec"'+(cor?' style="color:'+cor+'"':'')+'>'+titulo+'</h2>'
         + '<span class="add" style="color:var(--ink3)">'+brl(soma(arr))+'</span></div>'
@@ -1252,7 +1364,7 @@ function abrirLista(qual){
       valor:+c.valor,pago:r.pagosIds.has(c.id),frente:c.frente,detalhe:rotulo(c.frente)}));
     cartoesVisiveis().forEach(cd=>{
       const f=fatura(cd.nome,mes);
-      if(f.total>0 || f.parcelaId) itens.push({k:"f",id:f.parcelaId,nome:"Fatura "+cd.nome,
+      if(f.total>0 || f.parcelaId) itens.push({k:"f",id:f.parcelaId,cartao:cd.nome,mes:mes,nome:"Fatura "+cd.nome,
         dia:cd.dia_venc,valor:f.total,pago:f.pago,frente:cd.frente,
         detalhe:"parcelas "+brl0(f.parcelas)+" mais assinaturas "+brl0(f.assinaturas)});
     });
@@ -1274,7 +1386,7 @@ function abrirLista(qual){
       const quando = i.pago ? (realDif ? "pago "+brl(pg.valor) : "pago") : (atrasada ? "venceu dia "+i.dia : "vence dia "+i.dia);
       const cor = i.pago ? "var(--good)" : (atrasada ? "var(--bad)" : perto ? "var(--warn)" : "var(--ink3)");
       const cls = i.pago ? "pago" : atrasada ? "atras" : perto ? "falta" : "falta";
-      return '<div class="row" data-item="'+i.k+':'+i.id+'">'
+      return '<div class="row" data-k="'+i.k+'" data-id="'+i.id+'" data-cartao="'+(i.cartao||"")+'">' 
         + '<div class="ic '+cls+'">'+i.dia+'</div>'
         + (i.k==="c" ? '<div class="mid tap" data-edit="'+i.id+'">' : '<div class="mid">')
         + '<div class="t">'+sinal+i.nome+'</div>'
@@ -1291,11 +1403,11 @@ function abrirLista(qual){
         +'<span class="add" style="color:var(--ink3)">'+brl(somaPago)+'</span></div><div class="list">'
         + pagos.map(linha).join("") + '</div>' : "");
 
-    $("#slConteudo").querySelectorAll("[data-item]").forEach(row=>{
-      const [k,id]=row.dataset.item.split(":");
+    $("#slConteudo").querySelectorAll("[data-k]").forEach(row=>{
+      const k=row.dataset.k, id=row.dataset.id;
       row.querySelector(".chk").onclick=async()=>{
         if(k==="c") await marcarConta(+id,row.querySelector(".chk"));
-        else await marcarFatura(+id,row.querySelector(".chk"));
+        else await marcarFatura(row.dataset.cartao, mes, row.querySelector(".chk"));
         abrirLista("contas");
       };
       const ed=row.querySelector("[data-edit]");
@@ -1395,14 +1507,28 @@ function abrirLista(qual){
   abrirSheet("#sheetLista");
 }
 
-async function marcarFatura(parcelaId, el){
-  const p=dados.parcelas.find(x=>x.id===parcelaId); if(!p) return;
-  el.classList.toggle("on");
+/* Cartao que num mes so tem assinatura e compra a vista nao tem linha em
+   parcela_futura. Sem linha nao havia onde guardar o "pago", e o valor ficava
+   preso em "falta pagar" para sempre. Agora a linha e criada zerada na hora. */
+async function marcarFatura(nomeCartao, mes, el){
+  let p=dados.parcelas.find(x=>x.cartao===nomeCartao && x.mes_ref===mes);
+  if(el) el.classList.toggle("on");
   try{
-    await rest("parcela_futura?id=eq."+parcelaId,{method:"PATCH",headers:{Prefer:"return=minimal"},
-      body:JSON.stringify({pago:!p.pago})});
-    p.pago=!p.pago; pintar();
-  }catch(e){ el.classList.toggle("on"); toast("Não consegui marcar: "+e.message,true); }
+    if(p){
+      const novo=!p.pago;
+      await rest("parcela_futura?id=eq."+p.id,{method:"PATCH",headers:{Prefer:"return=minimal"},
+        body:JSON.stringify({pago:novo})});
+      p.pago=novo;
+    }else{
+      const cd=(dados.cartoes||[]).find(x=>x.nome===nomeCartao);
+      const casal=await meuCasal();
+      const criada=await rest("parcela_futura",{method:"POST",headers:{Prefer:"return=representation"},
+        body:JSON.stringify({casal_id:casal, cartao:nomeCartao, mes_ref:mes, valor:0,
+                             frente:(cd?cd.frente:"casa"), pago:true})});
+      if(criada && criada[0]) dados.parcelas.push(criada[0]);
+    }
+    pintar();
+  }catch(e){ if(el) el.classList.toggle("on"); toast("Não consegui marcar: "+e.message,true); }
 }
 
 function gastoPorCategoria(mes){
@@ -1478,10 +1604,14 @@ function pintarCartoes(){
   const mes = cdMes || mesRef();
   const hojeMes = mesRef();
   (function(){
-    let m=hojeMes; const ms=[];
-    for(let i=0;i<12;i++){ ms.push(m); m=mesSeguinte(m); }
+    /* 3 meses para tras tambem, senao fatura antiga esquecida em aberto
+       fica somando na divida sem ter tela onde marcar. */
+    let m=somaMeses(hojeMes,-3).slice(0,8)+"01"; const ms=[];
+    for(let i=0;i<15;i++){ ms.push(m); m=mesSeguinte(m); }
     $("#cdMeses").innerHTML = ms.map(x=>'<button class="chip'+(x===mes?" on":"")+'" data-cm="'+x+'">'
-      + (x===hojeMes? "este mês" : nomeMes(x))+'</button>').join("");
+      + (x===hojeMes? "este mês" : nomeMes(x))
+      + (x<hojeMes && dados.parcelas.some(p=>p.mes_ref===x && !p.pago && +p.valor>0) ? " !" : "")
+      +'</button>').join("");
     $("#cdMeses").querySelectorAll("[data-cm]").forEach(b=>b.onclick=()=>{ cdMes=b.dataset.cm; pintarCartoes(); });
   })();
   const cds=cartoesVisiveis();
@@ -1523,7 +1653,7 @@ function pintarCartoes(){
           <div class="amt" style="font-size:14px">${brl(compras)}</div></div>
         <div class="row"><div class="mid"><div class="t">Fatura de ${nomeMes(mes)}</div></div>
           <div class="amt">${brl(f.total)}</div>
-          ${f.parcelaId? `<button class="chip ${f.pago?"on":""}" data-pagar="${f.parcelaId}">${f.pago?"paga":"marcar paga"}</button>`:""}</div>
+          ${(f.total>0 || f.parcelaId)? `<button class="chip ${f.pago?"on":""}" data-pagar="${c.nome}">${f.pago?"paga":"marcar paga"}</button>`:""}</div>
         <div class="row"><div class="mid"><div class="t" style="font-size:14px">Ainda deve, até a última parcela</div></div>
           <div class="amt" style="font-size:14px">${brl(restante)}</div></div>
         ${(function(){
@@ -1557,13 +1687,11 @@ function pintarCartoes(){
   });
   $("#cdLista").querySelectorAll("[data-pagar]").forEach(el=>el.onclick=async(ev)=>{
     ev.stopPropagation();
-    const id=+el.dataset.pagar;
-    const p=dados.parcelas.find(x=>x.id===id);
-    try{
-      await rest("parcela_futura?id=eq."+id,{method:"PATCH",headers:{Prefer:"return=minimal"},body:JSON.stringify({pago:!p.pago})});
-      p.pago=!p.pago; pintarCartoes(); pintar();
-      toast(p.pago?"Fatura marcada como paga.":"Fatura voltou para em aberto.");
-    }catch(e){ toast(e.message,true); }
+    const nome=el.dataset.pagar;
+    await marcarFatura(nome, mes, null);
+    const q=dados.parcelas.find(x=>x.cartao===nome && x.mes_ref===mes);
+    pintarCartoes();
+    toast(q&&q.pago ? "Fatura marcada como paga." : "Fatura voltou para em aberto.");
   });
 }
 $("#cdFechar").onclick=()=>fecharSheet("#sheetCartoes");
@@ -1707,6 +1835,7 @@ function recentes(){
   }
   return out;
 }
+let editandoParcelado=false;
 function abrirFolha(evId){
   const ev = evId ? dados.eventos.find(x=>x.id===evId) : null;
   if(ev){
@@ -1716,7 +1845,17 @@ function abrirFolha(evId){
     $("#fSalvar").textContent="Salvar alterações";
     $("#fExcluir").classList.toggle("hide", ev.origem!=="manual");
     $("#fRecentesBox").classList.add("hide");
+    /* Parcela de uma compra parcelada: mudar valor, cartao ou forma aqui
+       deixaria a projecao do cartao desencontrada, porque parcela_futura nao
+       e recalculada no PATCH. Melhor travar e mandar excluir e refazer. */
+    editandoParcelado = !!ev.grupo;
+    if(editandoParcelado){
+      $("#fMsg").innerHTML='<div class="msg err">Esta é a parcela '+(ev.parcela_num||1)+' de '+(ev.parcelas||1)
+        + '. Aqui dá para corrigir só a descrição e a categoria. Para mudar valor, cartão ou forma de pagamento, '
+        + 'exclua a compra inteira (o botão Excluir apaga as '+(ev.parcelas||1)+' parcelas e desfaz a projeção do cartão) e lance de novo.</div>';
+    }
   }else{
+    editandoParcelado=false;
     form={id:null,tipo:"gasto",catId:null,frente:null,forma:"pix",cartao:null,parcelas:1};
     $("#sheetTitulo").textContent="Novo lançamento";
     $("#fValor").value=""; $("#fDesc").value=""; $("#fData").value=hojeISO();
@@ -1785,6 +1924,7 @@ const OPC_PARC=[1,2,3,4,5,6,10,12,18];
 function pintarParcelas(){
   const box=$("#fParcelas"), caixa=$("#fParcelasBox");
   if(form.id){ caixa.classList.add("hide"); return; }   /* editando: nao mexe em parcela por aqui */
+
   caixa.classList.remove("hide");
   box.innerHTML = OPC_PARC.map(n=>'<button class="chip'+(form.parcelas===n?" on":"")+'" data-pc="'+n+'">'+(n===1?"À vista":n+"x")+'</button>').join("");
   box.querySelectorAll("[data-pc]").forEach(b=>b.onclick=()=>{ form.parcelas=+b.dataset.pc; pintarParcelas(); pintarDestino(); });
@@ -1856,18 +1996,32 @@ function avisoValor(valor, catId, tipo){
 function palavras(t){ return String(t||"").toLowerCase()
   .normalize("NFD").replace(/[\u0300-\u036f]/g,"")
   .split(/[^a-z0-9]+/).filter(w=>w.length>3); }
+function pareceConta(c, valor, frente, desc){
+  if(frente && c.frente!==frente) return false;
+  const perto = Math.abs(valor - (+c.valor)) <= Math.max(1, (+c.valor)*0.15);
+  const pd = palavras(desc), pc = palavras(c.descricao);
+  const nome = pd.length>0 && pc.some(w=>pd.includes(w));
+  return perto || nome;
+}
 function contasFixasParecidas(valor, frente, desc){
   const mes=mesRef(), pagos=new Set(dados.pagos.map(p=>p.conta_fixa_id));
-  const pd=palavras(desc);
   return (dados.contas||[]).filter(c=>{
     if(c.cartao) return false;                         /* cartao se paga na fatura */
     if(!cobraNesteMes(c,mes)) return false;
     if(pagos.has(c.id)) return false;
-    if(frente && c.frente!==frente) return false;
-    const perto = Math.abs(valor - (+c.valor)) <= Math.max(1, (+c.valor)*0.15);
-    const pc = palavras(c.descricao);
-    const nome = pd.length>0 && pc.some(w=>pd.includes(w));
-    return perto || nome;
+    return pareceConta(c, valor, frente, desc);
+  }).slice(0,3);
+}
+/* Assinatura cobrada no cartao ja entra na fatura. Lancar de novo conta duas
+   vezes, e o aviso de conta fixa nao pegava esse caso porque ele so olha
+   contas do banco. */
+function assinaturasParecidas(valor, frente, desc, cartao){
+  const mes=mesRef();
+  return (dados.contas||[]).filter(c=>{
+    if(!c.cartao) return false;
+    if(cartao && c.cartao!==cartao) return false;
+    if(!cobraNesteMes(c,mes)) return false;
+    return pareceConta(c, valor, frente, desc);
   }).slice(0,3);
 }
 let confirmando=null;
@@ -1890,6 +2044,15 @@ $("#fSalvar").onclick = async ()=>{
     const dataEv=$("#fData").value||hojeISO();
     const assinatura=[dataEv,valor.toFixed(2),form.catId].join("|");
     if(form.tipo==="gasto" && (form.parcelas||1)===1){
+      const asn=assinaturasParecidas(valor, form.frente, $("#fDesc").value, form.cartao);
+      if(asn.length && confirmando!==assinatura){
+        confirmando=assinatura;
+        $("#fMsg").innerHTML='<div class="msg info">Isso parece uma <b>assinatura que já está cadastrada no cartão</b>: '
+          + asn.map(c=>c.descricao+' · '+brl(c.valor)+' no '+c.cartao).join('; ')
+          + '. Ela já entra sozinha na fatura todo mês. Lançar de novo conta o mesmo dinheiro duas vezes. '
+          + '<div style="margin-top:8px;color:var(--ink3)">Se for uma compra diferente mesmo, toque de novo em Salvar.</div></div>';
+        return;
+      }
       const fx=contasFixasParecidas(valor, form.frente, $("#fDesc").value);
       if(fx.length && confirmando!==assinatura){
         confirmando=assinatura;
@@ -1919,6 +2082,9 @@ $("#fSalvar").onclick = async ()=>{
   $("#fSalvar").textContent="Salvando...";
   try{
     if(form.id){
+      if(editandoParcelado){
+        for(const k of ["valor","cartao","forma","data","frente"]) delete corpo[k];
+      }
       await rest("evento?id=eq."+form.id,{method:"PATCH",headers:{Prefer:"return=minimal"},body:JSON.stringify(corpo)});
       toast("Lançamento atualizado.");
     }else{
@@ -1937,12 +2103,11 @@ $("#fSalvar").onclick = async ()=>{
         const base=corpo.data;
         const linhas=[];
         for(let i=0;i<n;i++){
-          const d=new Date(base+"T12:00:00"); d.setMonth(d.getMonth()+i);
-          const dia=String(Math.min(d.getDate(), new Date(d.getFullYear(), d.getMonth()+1, 0).getDate())).padStart(2,"0");
+          const dataParc = somaMeses(base, i);
           linhas.push(Object.assign({}, corpo, {
             casal_id:casal, origem:"manual", grupo:grupo, parcelas:n, parcela_num:i+1,
             valor: i===0 ? +(parcela+sobra).toFixed(2) : parcela,
-            data: d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+dia,
+            data: dataParc,
             descricao: (corpo.descricao||nomeCat(dados.cat.find(x=>x.id===form.catId)))+" "+(i+1)+"/"+n
           }));
         }
@@ -1957,10 +2122,17 @@ $("#fSalvar").onclick = async ()=>{
     }
     fecharSheet("#sheet"); await carregar();
   }catch(e){
-    if(!form.id && (!navigator.onLine || /fetch|network/i.test(e.message||""))){
+    const semRede = !navigator.onLine || /fetch|network/i.test(e.message||"");
+    if(!form.id && semRede && (form.parcelas||1)<=1){
       corpo.casal_id=casalCache; corpo.origem="manual";
       const f=lerFila(); f.push(corpo); gravarFila(f);
       fecharSheet("#sheet"); toast("Sem internet. Guardei no aparelho e envio sozinho depois.");
+    } else if(!form.id && semRede){
+      /* parcelado precisa gravar n linhas mais a projecao do cartao, e isso nao
+         da para garantir pela metade. Melhor pedir internet do que corromper. */
+      $("#fMsg").innerHTML='<div class="msg err">Sem internet nao da para lancar parcelado com seguranca, '
+        + 'porque sao varias linhas mais a projecao do cartao. Tente de novo com internet, '
+        + 'ou salve como a vista agora e corrija depois.</div>';
     } else $("#fMsg").innerHTML='<div class="msg err">'+e.message+'</div>';
   } finally { $("#fSalvar").textContent = form.id ? "Salvar alterações" : "Salvar lançamento"; }
 };

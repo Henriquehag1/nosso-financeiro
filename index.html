@@ -542,7 +542,7 @@ select.inp{appearance:none;background-image:linear-gradient(45deg,transparent 50
    A chave abaixo e publica de proposito: ela sozinha nao le nada.
    Quem decide o que cada pessoa enxerga e o proprio banco (RLS).
    ============================================================ */
-const VERSAO = "22";
+const VERSAO = "23";
 const SB  = "https://oihyhyyhessqnpkknhsi.supabase.co";
 const KEY = "sb_publishable_T7LERNVYS8mAK0tOlWfl5A_4-yCUjie";
 const LS_SESS = "nf.sessao", LS_FILA = "nf.fila", LS_CASAL = "nf.casal", LS_REJ = "nf.recusados";
@@ -939,14 +939,17 @@ function pintar(){
     const atrasadasFix = r.doBanco.filter(c=>!r.pagosIds.has(c.id) && c.dia < diaHoje);
     if(atrasadasFix.length){
       const soma=atrasadasFix.reduce((a,c)=>a+ +c.valor,0);
-      alertas.push({p:"contas", t:atrasadasFix.length+(atrasadasFix.length===1?" conta já venceu":" contas já venceram")
-        +" e não foram marcadas", v:soma, d:atrasadasFix.slice(0,3).map(c=>c.descricao+" dia "+c.dia).join(" · ")});
+      alertas.push({p:"contas", t:atrasadasFix.length===1
+          ? "1 conta já venceu e não foi marcada"
+          : atrasadasFix.length+" contas já venceram e não foram marcadas",
+        v:soma, d:atrasadasFix.slice(0,3).map(c=>c.descricao+" dia "+c.dia).join(" · ")});
     }
     const fatVelhas = r.parc.filter(x=>x.mes_ref<mesAtual && !x.pago && +x.valor>0);
     if(fatVelhas.length){
       const soma=fatVelhas.reduce((a,x)=>a+ +x.valor,0);
-      alertas.push({p:"cartoes", t:fatVelhas.length+(fatVelhas.length===1?" fatura de mês passado":" faturas de meses passados")
-        +" continua em aberto".replace("continua", fatVelhas.length===1?"continua":"continuam"), v:soma,
+      alertas.push({p:"cartoes", t:fatVelhas.length===1
+          ? "1 fatura de mês passado continua em aberto"
+          : fatVelhas.length+" faturas de meses passados continuam em aberto", v:soma,
         d:fatVelhas.slice(0,3).map(x=>x.cartao+" "+nomeMes(x.mes_ref)).join(" · ")+" · isso ainda soma na dívida"});
     }
     const paradas=(r.saldos||[]).filter(x=>{
@@ -955,8 +958,10 @@ function pintar(){
       return (Date.now()-d.getTime())/86400000 >= 30;
     });
     if(paradas.length){
-      alertas.push({p:"saldos", t:paradas.length+(paradas.length===1?" conta não é conferida":" contas não são conferidas")
-        +" há mais de 30 dias", v:paradas.reduce((a,x)=>a+ +x.valor,0),
+      alertas.push({p:"saldos", t:paradas.length===1
+          ? "1 conta não é conferida há mais de 30 dias"
+          : paradas.length+" contas não são conferidas há mais de 30 dias",
+        v:paradas.reduce((a,x)=>a+ +x.valor,0),
         d:paradas.slice(0,3).map(x=>x.nome).join(" · ")+" · o caixa e o fôlego saem daqui"});
     }
   })();

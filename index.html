@@ -542,7 +542,7 @@ select.inp{appearance:none;background-image:linear-gradient(45deg,transparent 50
    A chave abaixo e publica de proposito: ela sozinha nao le nada.
    Quem decide o que cada pessoa enxerga e o proprio banco (RLS).
    ============================================================ */
-const VERSAO = "23";
+const VERSAO = "24";
 const SB  = "https://oihyhyyhessqnpkknhsi.supabase.co";
 const KEY = "sb_publishable_T7LERNVYS8mAK0tOlWfl5A_4-yCUjie";
 const LS_SESS = "nf.sessao", LS_FILA = "nf.fila", LS_CASAL = "nf.casal", LS_REJ = "nf.recusados";
@@ -748,7 +748,7 @@ async function carregar(){
       rest("membro?select=user_id,nome,papel,casal_id"),
       rest("categoria?select=id,pai,filho,tipo,frentes,ativo,teto&ativo=is.true&order=pai.asc,filho.asc"),
       rest("conta_fixa?select=id,descricao,valor,dia,frente,cartao,periodicidade,mes_venc,varia&ativo=is.true&order=dia.asc"),
-      rest("parcela_futura?select=id,cartao,mes_ref,valor,frente,pago&order=mes_ref.asc"),
+      rest("parcela_futura?select=id,cartao,mes_ref,valor,frente,pago,pago_em&order=mes_ref.asc"),
       rest("conta_saldo?select=id,nome,frente,tipo,valor,atualizado_em&order=valor.desc"),
       rest("evento?select=id,data,valor,tipo,frente,descricao,forma,cartao,categoria_id,origem,obs,criado_por,parcelas,parcela_num,grupo,criado_em&data=gte."+janelaInicio()+"&order=data.desc,criado_em.desc&limit=2000"),
       rest("pagamento_conta?select=conta_fixa_id,mes_ref,valor&mes_ref=eq."+mes),
@@ -787,13 +787,22 @@ function cobraNesteMes(c, mes){
 }
 function custoMensal(c){ return c.periodicidade==="anual" ? (+c.valor)/12 : +c.valor; }
 
+/* A lente vale tambem dentro da fatura: na lente do consultorio, a fatura do
+   cartao do casal mostra so a parte do consultorio. O "pago" continua vindo da
+   linha inteira, senao a fatura quitada apareceria em aberto em toda lente. */
 function fatura(nomeCartao, mes){
-  const parc = dados.parcelas.find(p=>p.cartao===nomeCartao && p.mes_ref===mes);
-  const assin = dados.contas.filter(c=>c.cartao===nomeCartao && cobraNesteMes(c,mes));
+  const parcTodos = dados.parcelas.find(p=>p.cartao===nomeCartao && p.mes_ref===mes);
+  const parcVis   = filtra(dados.parcelas).find(p=>p.cartao===nomeCartao && p.mes_ref===mes);
+  const assin = filtra(dados.contas).filter(c=>c.cartao===nomeCartao && cobraNesteMes(c,mes));
   const somaAssin = assin.reduce((a,c)=>a+ +c.valor,0);
-  const valorParc = parc ? +parc.valor : 0;
+  const valorParc = parcVis ? +parcVis.valor : 0;
   const compras = comprasNoMes(nomeCartao, mes);
-  return { parcelaId: parc?parc.id:null, pago: parc?!!parc.pago:false,
+  const pago = parcTodos ? !!parcTodos.pago : false;
+  /* Compra lancada depois de a fatura ter sido marcada como paga cai nela mesmo
+     assim. Sem isso o valor sumia de "falta pagar" e ninguem via. */
+  const aposPago = (pago && parcTodos && parcTodos.pago_em)
+    ? comprasNoMes(nomeCartao, mes, parcTodos.pago_em) : 0;
+  return { parcelaId: parcTodos?parcTodos.id:null, pago: pago, aposPago: aposPago,
            parcelas: valorParc, assinaturas: somaAssin, itensAssin: assin, compras: compras,
            total: valorParc + somaAssin + compras };
 }
@@ -817,13 +826,25 @@ function mesSeguinte(mes){
   if(m>12){ m=1; a++; }
   return a+"-"+String(m).padStart(2,"0")+"-01";
 }
-function comprasNoMes(nomeCartao, mes){
-  return dados.eventos.filter(e=>e.forma==="cartao" && e.cartao===nomeCartao
+function comprasNoMes(nomeCartao, mes, desde){
+  return filtra(dados.eventos).filter(e=>e.forma==="cartao" && e.cartao===nomeCartao
                                  && (e.parcelas||1)===1
-                                 && mesDaFatura(nomeCartao, e.data)===mes)
+                                 && mesDaFatura(nomeCartao, e.data)===mes
+                                 && (!desde || (e.criado_em && e.criado_em > desde)))
                       .reduce((a,e)=>a+ (e.tipo==="gasto" ? +e.valor : -e.valor),0);
 }
-function cartoesVisiveis(){ return filtra(dados.cartoes); }
+/* Antes so aparecia o cartao cuja frente batia com a lente, e as assinaturas do
+   consultorio que ficam no cartao do casal desapareciam da lente do consultorio
+   enquanto continuavam no custo fixo dela. Agora o cartao aparece quando carrega
+   qualquer coisa daquela frente. */
+function cartoesVisiveis(){
+  const todos = dados.cartoes||[];
+  if(lente==="tudo") return todos;
+  return todos.filter(c=> c.frente===lente
+    || (dados.contas||[]).some(x=>x.cartao===c.nome && x.frente===lente)
+    || (dados.parcelas||[]).some(x=>x.cartao===c.nome && x.frente===lente && +x.valor>0)
+    || (dados.eventos||[]).some(x=>x.cartao===c.nome && x.frente===lente));
+}
 
 function resumo(){
   const mes=mesRef();
@@ -840,25 +861,35 @@ function resumo(){
   const faturaProx = parc.filter(p=>p.mes_ref===proxMes).reduce((a,p)=>a+ +p.valor,0);
   const fimMes = mesSeguinte(mes);
   const evs = filtra(dados.eventos).filter(e=>e.data>=mes && e.data<fimMes);
-  const gastoMes = evs.filter(e=>e.tipo==="gasto").reduce((a,e)=>a+ +e.valor,0);
-  const entradaMes = evs.filter(e=>e.tipo==="entrada").reduce((a,e)=>a+ +e.valor,0);
+  /* Entrada com forma cartao e estorno, nao e dinheiro entrando na conta.
+     Ela ja abate a fatura; contar como receita inflava o "entrou este mes". */
+  const estornos = evs.filter(e=>e.tipo==="entrada" && e.forma==="cartao").reduce((a,e)=>a+ +e.valor,0);
+  const gastoMes = evs.filter(e=>e.tipo==="gasto").reduce((a,e)=>a+ +e.valor,0) - estornos;
+  const entradaMes = evs.filter(e=>e.tipo==="entrada" && e.forma!=="cartao").reduce((a,e)=>a+ +e.valor,0);
   const pagosIds = new Set(dados.pagos.map(p=>p.conta_fixa_id));
   const doBanco = contas.filter(c=>!c.cartao && cobraNesteMes(c,mes));
   const noCartao = contas.filter(c=>c.cartao && cobraNesteMes(c,mes));
   const faltaBanco = doBanco.filter(c=>!pagosIds.has(c.id)).reduce((a,c)=>a+ +c.valor,0);
   let faltaFaturas = 0;
-  cartoesVisiveis().forEach(c=>{ const f=fatura(c.nome,mes); if(!f.pago) faltaFaturas += f.total; });
+  cartoesVisiveis().forEach(c=>{ const f=fatura(c.nome,mes);
+    faltaFaturas += f.pago ? f.aposPago : f.total; });
   const faltaTotal = faltaBanco + faltaFaturas;
 
   /* Quanto sai de verdade num mes futuro: todas as contas fixas que cobram
      naquele mes (assinaturas incluidas) mais as parcelas dos cartoes.
      As parcelas nao contem assinaturas, entao nada e contado duas vezes. */
+  const evsFiltrados = filtra(dados.eventos);
   const compromissoDoMes = (m)=>{
+    const fim = mesSeguinte(m);
     const fixas = contas.filter(c=>cobraNesteMes(c,m)).reduce((a,c)=>a+ +c.valor,0);
     const parcelas = parc.filter(p=>p.mes_ref===m && !p.pago).reduce((a,p)=>a+ +p.valor,0);
     /* compras avulsas ja lancadas que caem na fatura daquele mes */
     const avulsas = cartoesVisiveis().reduce((a,c)=>a+comprasNoMes(c.nome,m),0);
-    return fixas + parcelas + avulsas;
+    /* parcelado fora do cartao (boleto, carne, pix agendado) nao passa por
+       parcela_futura, entao precisa entrar aqui ou some da projecao inteira */
+    const foraDoCartao = evsFiltrados.filter(e=>e.forma!=="cartao" && e.data>=m && e.data<fim)
+      .reduce((a,e)=>a+ (e.tipo==="gasto" ? +e.valor : -e.valor),0);
+    return fixas + parcelas + avulsas + Math.max(0, foraDoCartao);
   };
   const calcFolego = (inicial)=>{
     let saldo = inicial, m = mes, meses = 0;
@@ -1370,8 +1401,10 @@ function abrirLista(qual){
     cartoesVisiveis().forEach(cd=>{
       const f=fatura(cd.nome,mes);
       if(f.total>0 || f.parcelaId) itens.push({k:"f",id:f.parcelaId,cartao:cd.nome,mes:mes,nome:"Fatura "+cd.nome,
-        dia:cd.dia_venc,valor:f.total,pago:f.pago,frente:cd.frente,
-        detalhe:"parcelas "+brl0(f.parcelas)+" mais assinaturas "+brl0(f.assinaturas)});
+        dia:cd.dia_venc,valor:f.total,pago:f.pago && f.aposPago===0,frente:cd.frente,
+        detalhe: (f.pago && f.aposPago!==0)
+          ? "fatura paga, mas entrou "+brl(f.aposPago)+" depois de marcada"
+          : "parcelas "+brl0(f.parcelas)+" mais assinaturas "+brl0(f.assinaturas)});
     });
     const falta=itens.filter(i=>!i.pago).sort((a,b)=>a.dia-b.dia);
     const pagos=itens.filter(i=>i.pago).sort((a,b)=>a.dia-b.dia);
@@ -1521,15 +1554,16 @@ async function marcarFatura(nomeCartao, mes, el){
   try{
     if(p){
       const novo=!p.pago;
+      const quando = novo ? new Date().toISOString() : null;
       await rest("parcela_futura?id=eq."+p.id,{method:"PATCH",headers:{Prefer:"return=minimal"},
-        body:JSON.stringify({pago:novo})});
-      p.pago=novo;
+        body:JSON.stringify({pago:novo, pago_em:quando})});
+      p.pago=novo; p.pago_em=quando;
     }else{
       const cd=(dados.cartoes||[]).find(x=>x.nome===nomeCartao);
       const casal=await meuCasal();
       const criada=await rest("parcela_futura",{method:"POST",headers:{Prefer:"return=representation"},
         body:JSON.stringify({casal_id:casal, cartao:nomeCartao, mes_ref:mes, valor:0,
-                             frente:(cd?cd.frente:"casa"), pago:true})});
+                             frente:(cd?cd.frente:"casa"), pago:true, pago_em:new Date().toISOString()})});
       if(criada && criada[0]) dados.parcelas.push(criada[0]);
     }
     pintar();
@@ -1656,6 +1690,10 @@ function pintarCartoes(){
              ? "compra até o dia "+c.dia_fechamento+" cai nesta fatura; depois disso, na próxima. Toque para corrigir o fechamento"
              : "sem dia de fechamento cadastrado, toque para informar"}</div></div>
           <div class="amt" style="font-size:14px">${brl(compras)}</div></div>
+        ${f.pago && f.aposPago!==0 ? `<div class="row"><div class="mid">
+            <div class="t" style="font-size:14px;color:var(--warn)">Entrou depois de você marcar como paga</div>
+            <div class="s">lançamento novo caiu nesta fatura. Confira se o banco cobrou.</div></div>
+          <div class="amt" style="font-size:14px;color:var(--warn)">${brl(f.aposPago)}</div></div>`:""}
         <div class="row"><div class="mid"><div class="t">Fatura de ${nomeMes(mes)}</div></div>
           <div class="amt">${brl(f.total)}</div>
           ${(f.total>0 || f.parcelaId)? `<button class="chip ${f.pago?"on":""}" data-pagar="${c.nome}">${f.pago?"paga":"marcar paga"}</button>`:""}</div>

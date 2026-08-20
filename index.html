@@ -125,6 +125,9 @@ body.travada .dock{display:none}
 .tetoRow .r small{display:block;font-weight:400;font-size:11px;color:var(--ink3)}
 
 .sechead{display:flex;align-items:baseline;justify-content:space-between;margin:26px 0 10px}
+.sep{padding:7px 14px;background:var(--surface2);font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--ink3);border-bottom:1px solid var(--line)}
+.sep b{color:var(--ink2);font-weight:600}
+.vermais{width:100%;padding:13px;font-size:14px;color:var(--blue);background:transparent}
 h2.sec{font-size:13px;text-transform:uppercase;letter-spacing:.08em;color:var(--ink3);margin:0;font-weight:600}
 .add{font-size:13px;color:var(--blue)}
 .list{background:var(--surface);border:1px solid var(--line);border-radius:16px;overflow:hidden}
@@ -254,6 +257,11 @@ select.inp{appearance:none;background-image:linear-gradient(45deg,transparent 50
     <div class="card full graf hide" id="grafFluxo"></div>
 
     <div class="sechead"><h2 class="sec">Entradas e saídas</h2><span class="add" style="color:var(--ink3)">toque para editar</span></div>
+    <div class="chips" id="ordExtrato" style="margin-bottom:10px">
+      <button class="chip on" data-ord="data">Mais recente</button>
+      <button class="chip" data-ord="registro">Registrado por último</button>
+      <button class="chip" data-ord="valor">Maior valor</button>
+    </div>
     <div class="list" id="eventos"></div>
 
     <p style="color:var(--ink3);font-size:11px;margin:22px 0 8px;text-align:center" id="rodape"></p>
@@ -534,7 +542,7 @@ select.inp{appearance:none;background-image:linear-gradient(45deg,transparent 50
    A chave abaixo e publica de proposito: ela sozinha nao le nada.
    Quem decide o que cada pessoa enxerga e o proprio banco (RLS).
    ============================================================ */
-const VERSAO = "20";
+const VERSAO = "21";
 const SB  = "https://oihyhyyhessqnpkknhsi.supabase.co";
 const KEY = "sb_publishable_T7LERNVYS8mAK0tOlWfl5A_4-yCUjie";
 const LS_SESS = "nf.sessao", LS_FILA = "nf.fila", LS_CASAL = "nf.casal";
@@ -679,7 +687,7 @@ async function carregar(){
       rest("conta_fixa?select=id,descricao,valor,dia,frente,cartao,periodicidade,mes_venc,varia&ativo=is.true&order=dia.asc"),
       rest("parcela_futura?select=id,cartao,mes_ref,valor,frente,pago&order=mes_ref.asc"),
       rest("conta_saldo?select=id,nome,frente,tipo,valor&order=valor.desc"),
-      rest("evento?select=id,data,valor,tipo,frente,descricao,forma,cartao,categoria_id,origem,obs,criado_por,parcelas,parcela_num,grupo&data=gte."+janelaInicio()+"&order=data.desc,criado_em.desc&limit=2000"),
+      rest("evento?select=id,data,valor,tipo,frente,descricao,forma,cartao,categoria_id,origem,obs,criado_por,parcelas,parcela_num,grupo,criado_em&data=gte."+janelaInicio()+"&order=data.desc,criado_em.desc&limit=2000"),
       rest("pagamento_conta?select=conta_fixa_id,mes_ref,valor&mes_ref=eq."+mes),
       rest("cartao?select=id,nome,dia_venc,dia_fechamento,limite,frente&ativo=is.true&order=nome.asc"),
       rest("fatura_conferida?select=id,cartao,mes_ref,valor_real,valor_app")
@@ -1023,19 +1031,124 @@ function nomeDe(uid){
   const m=(dados.membros||[]).find(x=>x.user_id===uid);
   return m ? (m.nome||"").trim().charAt(0).toUpperCase() : "";
 }
+var ordemExtrato = localStorage.getItem("nf.ordem") || "data";
+var extratoTudo = false;
+
+function isoLocal(dt){
+  return dt.getFullYear()+"-"+String(dt.getMonth()+1).padStart(2,"0")+"-"+String(dt.getDate()).padStart(2,"0");
+}
+function diaDeRegistro(e){
+  if(!e.criado_em) return e.data;
+  var d = new Date(e.criado_em);
+  return isNaN(d) ? e.data : isoLocal(d);
+}
+function rotuloDia(iso){
+  var hoje=new Date();
+  var h=isoLocal(hoje);
+  var o=isoLocal(new Date(hoje.getTime()-86400000));
+  if(iso===h) return "Hoje";
+  if(iso===o) return "Ontem";
+  var d=iso.split("-");
+  return d[2]+"/"+d[1]+"/"+d[0].slice(2);
+}
+function ordenaExtrato(arr){
+  var a=arr.slice();
+  if(ordemExtrato==="valor")    a.sort(function(x,y){ return (+y.valor)-(+x.valor); });
+  else if(ordemExtrato==="registro") a.sort(function(x,y){
+    var vx=x.criado_em||x.data, vy=y.criado_em||y.data;
+    return vx<vy?1:vx>vy?-1:0;
+  });
+  else {
+    /* ja aconteceu primeiro, do mais novo pro mais velho.
+       parcelas com data futura vao pro fim, na ordem em que vao cair. */
+    var h=isoLocal(new Date());
+    var pass=[], fut=[];
+    a.forEach(function(e){ (e.data>h?fut:pass).push(e); });
+    pass.sort(function(x,y){
+      if(x.data!==y.data) return x.data<y.data?1:-1;
+      var vx=x.criado_em||"", vy=y.criado_em||"";
+      return vx<vy?1:vx>vy?-1:0;
+    });
+    fut.sort(function(x,y){ return x.data<y.data?-1:x.data>y.data?1:0; });
+    a = pass.concat(fut);
+  }
+  return a;
+}
 function pintarExtrato(){
-  const evs=filtra(dados.eventos).slice(0,40);
-  $("#eventos").innerHTML = evs.length ? evs.map(e=>{
-    const c=dados.cat.find(x=>x.id===e.categoria_id); const d=e.data.split("-");
-    const quem=nomeDe(e.criado_por);
-    const voz = e.obs && /atalho/i.test(e.obs);
-    return `<div class="row tap" data-ev="${e.id}">
-      <div class="ic">${e.tipo==="entrada"?"\u2193":"\u2191"}</div>
-      <div class="mid"><div class="t">${e.descricao||nomeCat(c)}</div>
-        <div class="s">${d[2]}/${d[1]} \u00b7 ${nomeCat(c)} \u00b7 ${rotulo(e.frente)}${e.cartao?" \u00b7 "+e.cartao:""}${(e.parcelas||1)>1?" \u00b7 "+e.parcela_num+"/"+e.parcelas:""}${quem?" \u00b7 "+quem:""}${voz?" \u00b7 voz":""}</div></div>
-      <div class="amt ${e.tipo==="entrada"?"in":"out"}">${e.tipo==="entrada"?"+":"\u2212"}${num(e.valor)}</div></div>`;
-  }).join("") : '<div class="empty">Nada lan\u00e7ado ainda. Toque em Lan\u00e7ar.</div>';
-  $("#eventos").querySelectorAll("[data-ev]").forEach(el=>el.onclick=()=>abrirFolha(el.dataset.ev));
+  var chips=$("#ordExtrato");
+  if(chips){
+    chips.querySelectorAll("[data-ord]").forEach(function(b){
+      b.classList.toggle("on", b.dataset.ord===ordemExtrato);
+      b.onclick=function(){
+        if(ordemExtrato===b.dataset.ord) return;
+        ordemExtrato=b.dataset.ord;
+        localStorage.setItem("nf.ordem", ordemExtrato);
+        extratoTudo=false;
+        pintarExtrato();
+      };
+    });
+  }
+  var todos=ordenaExtrato(filtra(dados.eventos));
+  var lim = extratoTudo ? 400 : 40;
+  var evs = todos.slice(0, lim);
+  if(!evs.length){
+    $("#eventos").innerHTML='<div class="empty">Nada lançado ainda. Toque em Lançar.</div>';
+    return;
+  }
+  var porDia = (ordemExtrato!=="valor");
+  var chaveAtual="", html="", somaDia={};
+  if(porDia){
+    todos.forEach(function(e){
+      var k = ordemExtrato==="registro" ? diaDeRegistro(e) : e.data;
+      somaDia[k] = (somaDia[k]||0) + (e.tipo==="entrada" ? +e.valor : -e.valor);
+    });
+  }
+  var hojeIso=isoLocal(new Date()), abriuFuturo=false;
+  evs.forEach(function(e){
+    if(porDia){
+      if(ordemExtrato==="data" && e.data>hojeIso && !abriuFuturo){
+        abriuFuturo=true; chaveAtual="";
+        html += '<div class="sep" style="color:var(--warn)">ainda vai cair · parcelas futuras</div>';
+      }
+      var k = ordemExtrato==="registro" ? diaDeRegistro(e) : e.data;
+      if(k!==chaveAtual){
+        chaveAtual=k;
+        var sd=somaDia[k]||0;
+        html += '<div class="sep">'+rotuloDia(k)
+             + ' · <b>'+(sd>=0?"+":"−")+num(Math.abs(sd))+'</b></div>';
+      }
+    }
+    var c=dados.cat.find(function(x){ return x.id===e.categoria_id; });
+    var d=e.data.split("-");
+    var quem=nomeDe(e.criado_por);
+    var voz = e.obs && /atalho/i.test(e.obs);
+    var reg = diaDeRegistro(e);
+    var atrasado = (ordemExtrato==="registro" && reg!==e.data)
+        ? ' · gasto em '+d[2]+"/"+d[1] : "";
+    var dataCurta = (ordemExtrato==="registro") ? rotuloDia(reg) : d[2]+"/"+d[1];
+    html += '<div class="row tap" data-ev="'+e.id+'">'
+      + '<div class="ic">'+(e.tipo==="entrada"?"↓":"↑")+'</div>'
+      + '<div class="mid"><div class="t">'+(e.descricao||nomeCat(c))+'</div>'
+      + '<div class="s">'+dataCurta+' · '+nomeCat(c)+' · '+rotulo(e.frente)
+      + (e.cartao?" · "+e.cartao:"")
+      + ((e.parcelas||1)>1?" · "+e.parcela_num+"/"+e.parcelas:"")
+      + (quem?" · "+quem:"")
+      + (voz?" · voz":"")
+      + atrasado
+      + '</div></div>'
+      + '<div class="amt '+(e.tipo==="entrada"?"in":"out")+'">'
+      + (e.tipo==="entrada"?"+":"−")+num(e.valor)+'</div></div>';
+  });
+  if(todos.length>evs.length){
+    html += '<button class="vermais" id="verMais">ver mais '
+         + Math.min(todos.length-evs.length, 400-evs.length)+' lançamentos</button>';
+  }
+  $("#eventos").innerHTML=html;
+  $("#eventos").querySelectorAll("[data-ev]").forEach(function(el){
+    el.onclick=function(){ abrirFolha(el.dataset.ev); };
+  });
+  var vm=$("#verMais");
+  if(vm) vm.onclick=function(){ extratoTudo=true; pintarExtrato(); };
 }
 
 /* ---------------- portas: listas em folha ---------------- */

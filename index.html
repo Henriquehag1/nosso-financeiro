@@ -1124,17 +1124,16 @@ function pintarExtrato(){
     var voz = e.obs && /atalho/i.test(e.obs);
     var reg = diaDeRegistro(e);
     var atrasado = (ordemExtrato==="registro" && reg!==e.data)
-        ? ' · gasto em '+d[2]+"/"+d[1] : "";
+        ? ' <span style="color:var(--warn)">(gasto '+d[2]+"/"+d[1]+')</span>' : "";
     var dataCurta = (ordemExtrato==="registro") ? rotuloDia(reg) : d[2]+"/"+d[1];
     html += '<div class="row tap" data-ev="'+e.id+'">'
       + '<div class="ic">'+(e.tipo==="entrada"?"↓":"↑")+'</div>'
       + '<div class="mid"><div class="t">'+(e.descricao||nomeCat(c))+'</div>'
-      + '<div class="s">'+dataCurta+' · '+nomeCat(c)+' · '+rotulo(e.frente)
+      + '<div class="s">'+dataCurta+atrasado+' · '+nomeCat(c)+' · '+rotulo(e.frente)
       + (e.cartao?" · "+e.cartao:"")
       + ((e.parcelas||1)>1?" · "+e.parcela_num+"/"+e.parcelas:"")
       + (quem?" · "+quem:"")
       + (voz?" · voz":"")
-      + atrasado
       + '</div></div>'
       + '<div class="amt '+(e.tipo==="entrada"?"in":"out")+'">'
       + (e.tipo==="entrada"?"+":"−")+num(e.valor)+'</div></div>';

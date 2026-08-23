@@ -2032,7 +2032,7 @@ function notaMaquininha(){
   const n=Math.max(1, form.parcelas||1);
   const p=+(v.liquido/n).toFixed(2);
   const ini=$("#fPrimeiro").value||somaDias($("#fData").value||hojeISO(),30);
-  const datas=[]; for(let i=0;i<n;i++){ const d=somaMeses(ini,i).split("-"); datas.push(d[2]+"/"+d[1]); }
+  const datas=[]; for(let i=0;i<n;i++){ const d=somaDias(ini,30*i).split("-"); datas.push(d[2]+"/"+d[1]); }
   el.innerHTML = 'A pessoa pagou <b>'+brl(v.bruto)+'</b>'
     + (v.taxa>0 ? ', a maquininha fica com <b>'+brl(v.taxa)+'</b>' : '')
     + ', então cai na conta <b>'+brl(v.liquido)+'</b>'
@@ -2250,7 +2250,9 @@ $("#fSalvar").onclick = async ()=>{
         }
         const linhas=[];
         for(let i=0;i<n;i++){
-          const dataParc = somaMeses(base, i);
+          /* Maquininha paga de 30 em 30 dias a partir do primeiro recebimento.
+             Compra parcelada no cartao segue o calendario, mes a mes. */
+          const dataParc = maq ? somaDias(base, 30*i) : somaMeses(base, i);
           linhas.push(Object.assign({}, corpo, {
             casal_id:casal, origem:"manual", grupo:grupo, parcelas:n, parcela_num:i+1,
             valor: i===0 ? +(parcela+sobra).toFixed(2) : parcela,

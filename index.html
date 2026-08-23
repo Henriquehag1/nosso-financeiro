@@ -554,7 +554,7 @@ select.inp{appearance:none;background-image:linear-gradient(45deg,transparent 50
    A chave abaixo e publica de proposito: ela sozinha nao le nada.
    Quem decide o que cada pessoa enxerga e o proprio banco (RLS).
    ============================================================ */
-const VERSAO = "26";
+const VERSAO = "27";
 const SB  = "https://oihyhyyhessqnpkknhsi.supabase.co";
 const KEY = "sb_publishable_T7LERNVYS8mAK0tOlWfl5A_4-yCUjie";
 const LS_SESS = "nf.sessao", LS_FILA = "nf.fila", LS_CASAL = "nf.casal", LS_REJ = "nf.recusados";
@@ -909,20 +909,36 @@ function resumo(){
       .reduce((a,e)=>a+ (e.tipo==="gasto" ? +e.valor : -e.valor),0);
     return fixas + parcelas + avulsas + Math.max(0, foraDoCartao);
   };
-  const calcFolego = (inicial)=>{
+  /* Entradas ja lancadas com data futura, por mes. Sao recebimentos contratados,
+     como parcela de maquininha, nao previsao. */
+  const entraNoMes = (m)=>{
+    const fim = mesSeguinte(m);
+    return evsFiltrados.filter(e=>e.tipo==="entrada" && e.forma!=="cartao" && e.data>=m && e.data<fim)
+      .reduce((a,e)=>a+ +e.valor,0);
+  };
+  /* comEntradas: soma no mes certo o que ja esta contratado para entrar.
+     Mes sem custo nenhum conta como mes de folego, senao o numero encolhe
+     justamente quando esta tudo pago. */
+  const calcFolego = (inicial, comEntradas)=>{
     let saldo = inicial, m = mes, meses = 0;
     for(let i=0;i<60;i++){
+      if(comEntradas && i>0) saldo += entraNoMes(m);
       const custo = (i===0) ? faltaTotal : compromissoDoMes(m);
       if(custo>0){
         if(saldo >= custo){ saldo -= custo; meses += 1; }
         else { return {meses: meses + saldo/custo, ate:m, acabou:true}; }
-      }
+      }else{ meses += 1; }
       m = mesSeguinte(m);
     }
     return {meses, ate:m, acabou:false};
   };
-  const folego = calcFolego(caixa);
-  const folegoComReceber = calcFolego(caixa + receber);
+  const folego = calcFolego(caixa, false);
+  /* o que ja caiu de a_receber nao entra duas vezes: aqui entra so o saldo
+     de a_receber que ainda nao virou lancamento, mais os lancamentos futuros */
+  const receberSemLancado = Math.max(0, receber - evsFiltrados
+    .filter(e=>e.tipo==="entrada" && e.forma!=="cartao" && e.data>hojeISO())
+    .reduce((a,e)=>a+ +e.valor,0));
+  const folegoComReceber = calcFolego(caixa + receberSemLancado, true);
   const compromissoMedio = (function(){
     let soma=0, m=mes;
     for(let i=0;i<12;i++){ soma += (i===0?faltaTotal:compromissoDoMes(m)); m=mesSeguinte(m); }

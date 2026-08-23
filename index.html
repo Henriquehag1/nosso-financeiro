@@ -554,7 +554,7 @@ select.inp{appearance:none;background-image:linear-gradient(45deg,transparent 50
    A chave abaixo e publica de proposito: ela sozinha nao le nada.
    Quem decide o que cada pessoa enxerga e o proprio banco (RLS).
    ============================================================ */
-const VERSAO = "27";
+const VERSAO = "28";
 const SB  = "https://oihyhyyhessqnpkknhsi.supabase.co";
 const KEY = "sb_publishable_T7LERNVYS8mAK0tOlWfl5A_4-yCUjie";
 const LS_SESS = "nf.sessao", LS_FILA = "nf.fila", LS_CASAL = "nf.casal", LS_REJ = "nf.recusados";
@@ -1152,7 +1152,7 @@ function pintarGrafCompromisso(r){
   const pior=linhas.slice().sort((a,b)=>b.v-a.v)[0];
   box.innerHTML = linhas.map(l=>{
     const pct=Math.max(1.5, l.v/maior*100);
-    return '<div class="gr'+(l.hoje?' hoje':'')+'">'
+    return '<div class="gr tap'+(l.hoje?' hoje':'')+'" data-gm="'+l.m+'" data-gh="'+(l.hoje?1:0)+'">'
       + '<div class="mes">'+(l.hoje?'agora':nomeMes(l.m))+'</div>'
       + '<div class="trilho"><i style="width:'+pct.toFixed(1)+'%;background:var(--serieSai)"></i>'
       + '<span class="media" style="left:'+(media/maior*100).toFixed(1)+'%"></span></div>'
@@ -1162,8 +1162,94 @@ function pintarGrafCompromisso(r){
   + 'pagar em '+nomeMes(r.mes)+'. As outras são o mês inteiro: contas fixas, assinaturas e as parcelas de cartão já compradas. '
   + 'O tracinho cinza é a média dos doze meses, '+brl0(media)+'. '
   + 'O mês mais pesado é <b style="color:var(--ink2)">'+nomeMes(pior.m)+'</b>, com '+brl0(pior.v)+'.</div>';
+  box.querySelectorAll("[data-gm]").forEach(el=>el.onclick=()=>{
+    abrirCompromisso(el.dataset.gm, el.dataset.gh==="1");
+  });
   const info=$("#grafInfo");
-  if(info) info.textContent = "12 meses";
+  if(info) info.textContent = "toque num mês";
+}
+
+/* Abre a composicao de um mes do grafico de compromisso. Refaz a mesma conta
+   de compromissoDoMes, item por item, para o total bater com a barra. */
+function abrirCompromisso(m, ehAgora){
+  const r=resumo();
+  const contas=filtra(dados.contas), parc=filtra(dados.parcelas);
+  const fim=mesSeguinte(m);
+  const blocos=[]; let total=0;
+  const linha=(nome,det,valor,cor)=>'<div class="row"><div class="mid">'
+    + '<div class="t">'+nome+'</div>'+(det?'<div class="s">'+det+'</div>':'')
+    + '</div><div class="amt"'+(cor?' style="color:'+cor+'"':'')+'>'+brl(valor)+'</div></div>';
+  const bloco=(titulo,itens,soma,cor)=>{
+    if(!itens.length) return "";
+    return '<div class="sechead" style="margin:14px 0 8px"><h2 class="sec"'+(cor?' style="color:'+cor+'"':'')+'>'+titulo+'</h2>'
+      + '<span class="add" style="color:var(--ink3)">'+brl(soma)+'</span></div>'
+      + '<div class="list">'+itens.join("")+'</div>';
+  };
+
+  if(ehAgora){
+    /* mes corrente: so o que ainda falta pagar */
+    const naoPagas=r.doBanco.filter(c=>!r.pagosIds.has(c.id)).sort((a,b)=>a.dia-b.dia);
+    const somaB=naoPagas.reduce((a,c)=>a+ +c.valor,0); total+=somaB;
+    blocos.push(bloco("Contas do banco ainda em aberto",
+      naoPagas.map(c=>linha(c.descricao,"vence dia "+c.dia+" · "+rotulo(c.frente),+c.valor)), somaB, "var(--warn)"));
+    const fat=[]; let somaF=0;
+    cartoesVisiveis().forEach(c=>{
+      const f=fatura(c.nome,m);
+      const v=f.pago ? f.aposPago : f.total;
+      if(v>0){ somaF+=v;
+        fat.push(linha("Fatura "+c.nome,
+          f.pago ? "fatura marcada como paga, mas entrou lançamento depois"
+                 : "parcelas "+brl0(f.parcelas)+" · assinaturas "+brl0(f.assinaturas)+" · compras "+brl0(f.compras),
+          v)); }
+    });
+    total+=somaF;
+    blocos.push(bloco("Faturas de cartão em aberto", fat, somaF, "var(--warn)"));
+  }else{
+    const fixasBanco=contas.filter(c=>!c.cartao && cobraNesteMes(c,m)).sort((a,b)=>a.dia-b.dia);
+    const somaFB=fixasBanco.reduce((a,c)=>a+ +c.valor,0); total+=somaFB;
+    blocos.push(bloco("Contas fixas do banco",
+      fixasBanco.map(c=>linha(c.descricao,"dia "+c.dia+" · "+rotulo(c.frente)
+        +(c.periodicidade==="anual"?" · anual":"")+(c.varia?" · valor varia":""),+c.valor)), somaFB));
+
+    const assin=contas.filter(c=>c.cartao && cobraNesteMes(c,m)).sort((a,b)=>a.cartao<b.cartao?-1:1);
+    const somaA=assin.reduce((a,c)=>a+ +c.valor,0); total+=somaA;
+    blocos.push(bloco("Assinaturas cobradas no cartão",
+      assin.map(c=>linha(c.descricao,c.cartao+" · "+rotulo(c.frente)+(c.periodicidade==="anual"?" · anual":""),+c.valor)), somaA));
+
+    const pcs=parc.filter(p=>p.mes_ref===m && !p.pago && +p.valor>0).sort((a,b)=>+b.valor-+a.valor);
+    const somaP=pcs.reduce((a,p)=>a+ +p.valor,0); total+=somaP;
+    blocos.push(bloco("Parcelas de compras já feitas",
+      pcs.map(p=>linha(p.cartao,"soma das parcelas que vencem nesta fatura · "+rotulo(p.frente),+p.valor)), somaP));
+
+    const avs=[]; let somaAv=0;
+    cartoesVisiveis().forEach(c=>{ const v=comprasNoMes(c.nome,m);
+      if(Math.abs(v)>0.005){ somaAv+=v; avs.push(linha(c.nome,"compras à vista já lançadas que caem nesta fatura",v)); } });
+    total+=somaAv;
+    blocos.push(bloco("Compras já lançadas na fatura deste mês", avs, somaAv));
+
+    const foraG=filtra(dados.eventos).filter(e=>e.forma!=="cartao" && e.tipo==="gasto" && e.data>=m && e.data<fim);
+    const foraE=filtra(dados.eventos).filter(e=>e.forma!=="cartao" && e.tipo==="entrada" && e.data>=m && e.data<fim);
+    const sg=foraG.reduce((a,e)=>a+ +e.valor,0), se=foraE.reduce((a,e)=>a+ +e.valor,0);
+    const liquido=Math.max(0, sg-se);
+    total+=liquido;
+    if(foraG.length||foraE.length){
+      const itens=foraG.sort((a,b)=>a.data<b.data?-1:1)
+        .map(e=>linha(e.descricao||"lançamento",e.data.slice(8,10)+"/"+e.data.slice(5,7)+" · "+rotulo(e.frente),+e.valor));
+      if(se>0) itens.push(linha("Recebimentos já contratados no mês",
+        foraE.length+(foraE.length===1?" entrada já lançada":" entradas já lançadas")+", abatem o que sai", -se, "var(--good)"));
+      if(sg-se<0) itens.push(linha("Sobra","as entradas do mês cobrem tudo que sai fora do cartão, então este bloco entra como zero",0,"var(--ink3)"));
+      blocos.push(bloco("Fora do cartão, com data neste mês", itens, liquido));
+    }
+  }
+
+  $("#slTitulo").textContent = ehAgora ? ("Falta pagar em "+nomeMes(m)) : ("Compromisso de "+nomeMes(m));
+  $("#slNota").innerHTML = "Total <b>"+brl(total)+"</b>. "
+    + (ehAgora ? "É o que ainda não foi pago neste mês, contas do banco mais faturas de cartão."
+               : "É tudo que já está combinado para sair em "+nomeMes(m)+", mesmo sem nenhuma compra nova.")
+    + (lente!=="tudo" ? " Lente: "+((FRENTES.find(f=>f.id===lente)||{}).nome||lente)+"." : "");
+  $("#slAdd").textContent=""; $("#slAdd").onclick=null;
+  $("#slConteudo").innerHTML = blocos.filter(Boolean).join("") || '<div class="empty">Nada combinado para este mês.</div>';
+  abrirSheet("#sheetLista");
 }
 
 /* Duas series: entrou e saiu de verdade, mes a mes. So meses com movimento. */

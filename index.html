@@ -318,6 +318,16 @@ select.inp{appearance:none;background-image:linear-gradient(45deg,transparent 50
       <select class="inp" id="fCartao"></select>
     </div>
 
+    <div id="fMaqBox" class="hide">
+      <div class="two">
+        <div><div class="lbl" style="margin-top:0">Taxa da maquininha</div>
+          <input class="inp" id="fTaxa" inputmode="decimal" placeholder="0,00"></div>
+        <div><div class="lbl" style="margin-top:0">Primeiro recebimento</div>
+          <input class="inp" id="fPrimeiro" type="date"></div>
+      </div>
+      <div class="destino" id="fMaqNota" style="margin-top:10px"></div>
+    </div>
+
     <div class="two" style="margin-top:18px">
       <div><div class="lbl" style="margin-top:0">Data</div><input class="inp" id="fData" type="date"></div>
       <div><div class="lbl" style="margin-top:0">Descrição</div><input class="inp" id="fDesc" placeholder="opcional"></div>
@@ -544,7 +554,7 @@ select.inp{appearance:none;background-image:linear-gradient(45deg,transparent 50
    A chave abaixo e publica de proposito: ela sozinha nao le nada.
    Quem decide o que cada pessoa enxerga e o proprio banco (RLS).
    ============================================================ */
-const VERSAO = "25";
+const VERSAO = "26";
 const SB  = "https://oihyhyyhessqnpkknhsi.supabase.co";
 const KEY = "sb_publishable_T7LERNVYS8mAK0tOlWfl5A_4-yCUjie";
 const LS_SESS = "nf.sessao", LS_FILA = "nf.fila", LS_CASAL = "nf.casal", LS_REJ = "nf.recusados";
@@ -555,8 +565,14 @@ const FRENTES = [
 ];
 const FORMAS = [
   {id:"pix",nome:"Pix"},{id:"cartao",nome:"Cartão"},{id:"debito",nome:"Débito"},
-  {id:"dinheiro",nome:"Dinheiro"},{id:"boleto",nome:"Boleto"},{id:"transferencia",nome:"Transferência"}
+  {id:"dinheiro",nome:"Dinheiro"},{id:"boleto",nome:"Boleto"},{id:"transferencia",nome:"Transferência"},
+  {id:"maquininha",nome:"Maquininha"}
 ];
+/* Soma dias no calendario, sem armadilha de fuso. */
+function somaDias(iso,k){
+  const d=new Date(iso+"T12:00:00"); d.setDate(d.getDate()+k);
+  return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0");
+}
 const TIPOS_SALDO = [
   {id:"conta",nome:"Conta"},{id:"reserva",nome:"Reserva"},
   {id:"especie",nome:"Espécie"},{id:"a_receber",nome:"A receber"}
@@ -1928,6 +1944,7 @@ function abrirFolha(evId){
     form={id:null,tipo:"gasto",catId:null,frente:null,forma:"pix",cartao:null,parcelas:1};
     $("#sheetTitulo").textContent="Novo lançamento";
     $("#fValor").value=""; $("#fDesc").value=""; $("#fData").value=hojeISO();
+    $("#fTaxa").value=""; $("#fPrimeiro").value="";
     $("#fSalvar").textContent="Salvar lançamento";
     $("#fExcluir").classList.add("hide");
     pintarRecentes();
@@ -1958,6 +1975,7 @@ function segTipo(){
     const on=b.dataset.tipo===form.tipo;
     b.className = on ? "on "+(form.tipo==="entrada"?"in":"") : "";
   });
+  if(form.tipo!=="entrada" && form.forma==="maquininha") form.forma="pix";
 }
 function pintarCats(){
   const cs=catsVisiveis();
@@ -1987,6 +2005,41 @@ function pintarFormas(){
     if(form.cartao) $("#fCartao").value=form.cartao;
     $("#fCartao").onchange=()=>{ form.cartao=$("#fCartao").value; notaParcela(); pintarDestino(); };
   } else { box.classList.add("hide"); form.cartao=null; }
+
+  /* Maquininha: o dinheiro nao entra hoje, entra parcela a parcela, ja com a
+     taxa descontada. Por isso ganha data propria de primeiro recebimento. */
+  const mb=$("#fMaqBox");
+  if(form.forma==="maquininha" && form.tipo==="entrada"){
+    mb.classList.remove("hide");
+    if(!$("#fPrimeiro").value){
+      const base=$("#fData").value||hojeISO();
+      $("#fPrimeiro").value = somaDias(base,30);
+    }
+    $("#fTaxa").oninput=()=>{ notaMaquininha(); notaParcela(); };
+    $("#fPrimeiro").onchange=()=>{ notaMaquininha(); notaParcela(); };
+    notaMaquininha();
+  } else { mb.classList.add("hide"); }
+}
+function liquidoMaq(){
+  const bruto=parseNum($("#fValor").value);
+  const taxa =(form.forma==="maquininha") ? parseNum($("#fTaxa").value) : 0;
+  return { bruto:bruto, taxa:taxa, liquido:+(bruto-taxa).toFixed(2) };
+}
+function notaMaquininha(){
+  const el=$("#fMaqNota"); if(!el) return;
+  const v=liquidoMaq();
+  if(!(v.bruto>0)){ el.innerHTML='Digite o valor que a pessoa pagou. A taxa é opcional.'; return; }
+  const n=Math.max(1, form.parcelas||1);
+  const p=+(v.liquido/n).toFixed(2);
+  const ini=$("#fPrimeiro").value||somaDias($("#fData").value||hojeISO(),30);
+  const datas=[]; for(let i=0;i<n;i++){ const d=somaMeses(ini,i).split("-"); datas.push(d[2]+"/"+d[1]); }
+  el.innerHTML = 'A pessoa pagou <b>'+brl(v.bruto)+'</b>'
+    + (v.taxa>0 ? ', a maquininha fica com <b>'+brl(v.taxa)+'</b>' : '')
+    + ', então cai na conta <b>'+brl(v.liquido)+'</b>'
+    + (n>1 ? ' em <b>'+n+' vezes de '+brl(p)+'</b>, nos dias <b>'+datas.join(', ')+'</b>.'
+           : ' no dia <b>'+datas[0]+'</b>.')
+    + '<div style="color:var(--ink3);margin-top:6px">Registro o líquido, que é o que entra de verdade no caixa. '
+    + 'O bruto e a taxa ficam guardados no lançamento.</div>';
 }
 
 const OPC_PARC=[1,2,3,4,5,6,10,12,18];
@@ -1995,13 +2048,19 @@ function pintarParcelas(){
   if(form.id){ caixa.classList.add("hide"); return; }   /* editando: nao mexe em parcela por aqui */
 
   caixa.classList.remove("hide");
-  box.innerHTML = OPC_PARC.map(n=>'<button class="chip'+(form.parcelas===n?" on":"")+'" data-pc="'+n+'">'+(n===1?"À vista":n+"x")+'</button>').join("");
-  box.querySelectorAll("[data-pc]").forEach(b=>b.onclick=()=>{ form.parcelas=+b.dataset.pc; pintarParcelas(); pintarDestino(); });
+  const rec = form.tipo==="entrada";
+  $("#fParcelasBox").querySelector(".lbl").textContent = rec ? "Recebo em quantas vezes" : "Em quantas vezes";
+  box.innerHTML = OPC_PARC.map(n=>'<button class="chip'+(form.parcelas===n?" on":"")+'" data-pc="'+n+'">'
+    + (n===1 ? (rec?"De uma vez":"À vista") : n+"x")+'</button>').join("");
+  box.querySelectorAll("[data-pc]").forEach(b=>b.onclick=()=>{
+    form.parcelas=+b.dataset.pc; pintarParcelas(); pintarDestino(); notaMaquininha();
+  });
   notaParcela();
 }
 function notaParcela(){
   const el=$("#fParcelaNota");
   const total=parseNum($("#fValor").value);
+  if(form.forma==="maquininha"){ el.classList.add("hide"); return; }
   if(form.parcelas<=1 || !(total>0)){ el.classList.add("hide"); return; }
   el.classList.remove("hide");
   const p=total/form.parcelas;
@@ -2161,15 +2220,34 @@ $("#fSalvar").onclick = async ()=>{
       const n=Math.max(1, form.parcelas||1);
       if(n===1){
         corpo.casal_id=casal; corpo.origem="manual";
+        if(form.forma==="maquininha"){
+          const v=liquidoMaq();
+          corpo.obs = "maquininha, bruto "+v.bruto.toFixed(2)
+                    + (v.taxa>0 ? ", taxa "+v.taxa.toFixed(2) : "")
+                    + ", venda em "+corpo.data;
+          corpo.valor = v.liquido;
+          corpo.data = $("#fPrimeiro").value || somaDias(corpo.data,30);
+        }
         await rest("evento",{method:"POST",headers:{Prefer:"return=minimal"},body:JSON.stringify(corpo)});
         toast("Lançado.");
       }else{
         /* Parcelamento: uma linha por mes, ligadas pelo mesmo grupo.
            Se for no cartao, as parcelas tambem entram na projecao dele. */
         const grupo=(crypto.randomUUID?crypto.randomUUID():String(Date.now())+Math.random());
-        const parcela=+(valor/n).toFixed(2);
-        const sobra=+(valor - parcela*n).toFixed(2);
-        const base=corpo.data;
+        const maq = (form.forma==="maquininha");
+        /* Maquininha: o que entra no caixa e o liquido, e entra na data em que
+           cada parcela cai, nao na data da venda. */
+        const v = maq ? liquidoMaq() : {bruto:valor, taxa:0, liquido:valor};
+        const aRatear = maq ? v.liquido : valor;
+        const parcela=+(aRatear/n).toFixed(2);
+        const sobra=+(aRatear - parcela*n).toFixed(2);
+        const base = maq ? ($("#fPrimeiro").value || somaDias(corpo.data,30)) : corpo.data;
+        if(maq){
+          corpo.valor = v.liquido;
+          corpo.obs = "maquininha, bruto "+v.bruto.toFixed(2)
+                    + (v.taxa>0 ? ", taxa "+v.taxa.toFixed(2) : "")
+                    + ", venda em "+corpo.data;
+        }
         const linhas=[];
         for(let i=0;i<n;i++){
           const dataParc = somaMeses(base, i);
@@ -2181,12 +2259,14 @@ $("#fSalvar").onclick = async ()=>{
           }));
         }
         await rest("evento",{method:"POST",headers:{Prefer:"return=minimal"},body:JSON.stringify(linhas)});
-        if(form.forma==="cartao" && form.cartao){
+        /* somar_parcelas e divida de cartao. Entrada nunca entra ai, senao um
+           recebimento parcelado viraria divida no cartao do casal. */
+        if(form.tipo==="gasto" && form.forma==="cartao" && form.cartao){
           await api("/rest/v1/rpc/somar_parcelas",{method:"POST",body:JSON.stringify({
             p_cartao:form.cartao, p_mes:mesDaFatura(form.cartao, base), p_n:n,
             p_valor:parcela, p_frente:corpo.frente })});
         }
-        toast(n+" parcelas de "+brl(parcela)+" lançadas.");
+        toast(n+(form.tipo==="entrada" ? " recebimentos de " : " parcelas de ")+brl(parcela)+" lançados.");
       }
     }
     fecharSheet("#sheet"); await carregar();

@@ -299,6 +299,11 @@ select.inp{appearance:none;background-image:linear-gradient(45deg,transparent 50
     <div class="lbl">Valor</div>
     <input class="valor" id="fValor" inputmode="decimal" placeholder="0,00">
 
+    <div id="fFrenteBox">
+      <div class="lbl">De qual frente</div>
+      <div class="chips" id="fFrentes"></div>
+    </div>
+
     <div class="lbl">Categoria</div>
     <div class="chips" id="fCats"></div>
 
@@ -554,10 +559,10 @@ select.inp{appearance:none;background-image:linear-gradient(45deg,transparent 50
    A chave abaixo e publica de proposito: ela sozinha nao le nada.
    Quem decide o que cada pessoa enxerga e o proprio banco (RLS).
    ============================================================ */
-const VERSAO = "28";
+const VERSAO = "29";
 const SB  = "https://oihyhyyhessqnpkknhsi.supabase.co";
 const KEY = "sb_publishable_T7LERNVYS8mAK0tOlWfl5A_4-yCUjie";
-const LS_SESS = "nf.sessao", LS_FILA = "nf.fila", LS_CASAL = "nf.casal", LS_REJ = "nf.recusados";
+const LS_SESS = "nf.sessao", LS_FILA = "nf.fila", LS_CASAL = "nf.casal", LS_REJ = "nf.recusados", LS_FRENTE = "nf.frenteLanc";
 
 const FRENTES = [
   {id:"tudo", nome:"Tudo"}, {id:"casa", nome:"Casal"},
@@ -2004,10 +2009,29 @@ function frentesPermitidas(c){
   const fs=(c&&c.frentes)||[];
   return (eu&&eu.papel==="dono") ? fs : fs.filter(f=>f!=="consultorio");
 }
+/* Com a lente em Tudo, a lista vinha inteira, as tres frentes juntas, trinta
+   chips. O filtro de frente corta para so o que interessa. */
 function catsVisiveis(){
+  const alvo = (lente!=="tudo") ? lente : (form.frenteFiltro||null);
   return dados.cat.filter(c=>c.tipo===form.tipo)
     .filter(c=>frentesPermitidas(c).length>0)
-    .filter(c=> lente==="tudo" ? true : frentesPermitidas(c).includes(lente));
+    .filter(c=> !alvo ? true : frentesPermitidas(c).includes(alvo));
+}
+function pintarFrentes(){
+  const box=$("#fFrentes"), caixa=$("#fFrenteBox");
+  if(!box) return;
+  if(lente!=="tudo"){ caixa.classList.add("hide"); return; }   /* a lente ja filtra */
+  caixa.classList.remove("hide");
+  const disp = FRENTES.filter(f=>f.id!=="tudo")
+    .filter(f=> f.id!=="consultorio" || (eu && eu.papel==="dono"));
+  box.innerHTML = disp.map(f=>'<button class="chip'+(form.frenteFiltro===f.id?" on":"")+'" data-ff="'+f.id+'">'+f.nome+'</button>').join("")
+    + '<button class="chip'+(form.frenteFiltro?"":" on")+'" data-ff="">Todas</button>';
+  box.querySelectorAll("[data-ff]").forEach(b=>b.onclick=()=>{
+    form.frenteFiltro = b.dataset.ff || null;
+    try{ localStorage.setItem(LS_FRENTE, form.frenteFiltro||""); }catch(e){}
+    if(!catsVisiveis().some(c=>c.id===form.catId)){ form.catId=null; form.frente=null; }
+    pintarFrentes(); pintarCats(); pintarDestino();
+  });
 }
 function recentes(){
   const vistos=new Set(), out=[];
@@ -2026,7 +2050,7 @@ let editandoParcelado=false;
 function abrirFolha(evId){
   const ev = evId ? dados.eventos.find(x=>x.id===evId) : null;
   if(ev){
-    form={id:ev.id,tipo:ev.tipo,catId:ev.categoria_id,frente:ev.frente,forma:ev.forma||"pix",cartao:ev.cartao,parcelas:1};
+    form={id:ev.id,tipo:ev.tipo,catId:ev.categoria_id,frente:ev.frente,forma:ev.forma||"pix",cartao:ev.cartao,parcelas:1,frenteFiltro:ev.frente};
     $("#sheetTitulo").textContent="Editar lançamento";
     $("#fValor").value=num(ev.valor); $("#fDesc").value=ev.descricao||""; $("#fData").value=ev.data;
     $("#fSalvar").textContent="Salvar alterações";
@@ -2043,7 +2067,8 @@ function abrirFolha(evId){
     }
   }else{
     editandoParcelado=false;
-    form={id:null,tipo:"gasto",catId:null,frente:null,forma:"pix",cartao:null,parcelas:1};
+    let ff=null; try{ ff=localStorage.getItem(LS_FRENTE)||null; }catch(e){}
+    form={id:null,tipo:"gasto",catId:null,frente:null,forma:"pix",cartao:null,parcelas:1,frenteFiltro:ff};
     $("#sheetTitulo").textContent="Novo lançamento";
     $("#fValor").value=""; $("#fDesc").value=""; $("#fData").value=hojeISO();
     $("#fTaxa").value=""; $("#fPrimeiro").value="";
@@ -2052,7 +2077,7 @@ function abrirFolha(evId){
     pintarRecentes();
   }
   $("#fMsg").innerHTML="";
-  segTipo(); pintarCats(); pintarFormas(); pintarParcelas(); pintarDestino();
+  segTipo(); pintarFrentes(); pintarCats(); pintarFormas(); pintarParcelas(); pintarDestino();
   abrirSheet("#sheet");
   if(!ev) setTimeout(()=>$("#fValor").focus(),120);
 }
@@ -2068,7 +2093,7 @@ function pintarRecentes(){
   $("#fRecentes").querySelectorAll("[data-r]").forEach(b=>b.onclick=()=>{
     const e=rs[+b.dataset.r];
     form.tipo=e.tipo; form.catId=e.categoria_id; form.frente=e.frente; form.forma=e.forma||"pix"; form.cartao=e.cartao;
-    segTipo(); pintarCats(); pintarFormas(); pintarParcelas(); pintarDestino();
+    segTipo(); pintarFrentes(); pintarCats(); pintarFormas(); pintarParcelas(); pintarDestino();
     $("#fValor").focus();
   });
 }
@@ -2184,7 +2209,7 @@ function pintarDestino(){
   $("#fDestino").querySelectorAll("[data-fr]").forEach(b=>b.onclick=()=>{ form.frente=b.dataset.fr; pintarDestino(); });
 }
 $("#segTipo").querySelectorAll("button").forEach(b=>b.onclick=()=>{
-  form.tipo=b.dataset.tipo; form.catId=null; form.frente=null; segTipo(); pintarCats(); pintarDestino();
+  form.tipo=b.dataset.tipo; form.catId=null; form.frente=null; segTipo(); pintarFrentes(); pintarCats(); pintarFormas(); pintarDestino();
 });
 $("#fValor").addEventListener("input",notaParcela);
 $("#fData").addEventListener("change",notaParcela);

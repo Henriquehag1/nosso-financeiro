@@ -559,7 +559,7 @@ select.inp{appearance:none;background-image:linear-gradient(45deg,transparent 50
    A chave abaixo e publica de proposito: ela sozinha nao le nada.
    Quem decide o que cada pessoa enxerga e o proprio banco (RLS).
    ============================================================ */
-const VERSAO = "31";
+const VERSAO = "32";
 const SB  = "https://oihyhyyhessqnpkknhsi.supabase.co";
 const KEY = "sb_publishable_T7LERNVYS8mAK0tOlWfl5A_4-yCUjie";
 const LS_SESS = "nf.sessao", LS_FILA = "nf.fila", LS_CASAL = "nf.casal", LS_REJ = "nf.recusados", LS_FRENTE = "nf.frenteLanc";
@@ -896,6 +896,16 @@ function vendasDoMes(m){
   });
   return t;
 }
+/* Agosto de 2026 e o primeiro mes com o sistema inteiro no ar: contas fixas
+   conferidas, faturas batidas com documento e recebiveis datados. Julho para
+   tras tem dado pela metade e uma leitura de saude ali enganaria. */
+const MES_ZERO = "2026-08-01";
+let saudeMes=null;
+function mesesComDado(ate){
+  const out=[]; let m=MES_ZERO;
+  while(m<=ate){ out.push(m); m=mesSeguinte(m); }
+  return out;
+}
 function mesAnterior(mes){
   let a=+mes.slice(0,4), m=+mes.slice(5,7)-1;
   if(m<1){ m=12; a--; }
@@ -1117,6 +1127,7 @@ function pintar(){
       <div class="n">tudo que se repete: moradia, consult\u00f3rio, confeitaria e assinaturas</div></div>
 
     ${(function(){
+      saudeMes=null;                       /* a folha sempre abre no mes corrente */
       const sd=saudeDoMes(mesAtual);
       const nome = lente==="tudo" ? "DE TUDO" : "D"+(lente==="casa"?"O CASAL":lente==="consultorio"?"O CONSULT\u00d3RIO":"A CONFEITARIA");
       const cor = sd.operacional>0 ? "good" : sd.operacional<0 ? "bad" : "";
@@ -1514,9 +1525,11 @@ function abrirLista(qual){
   if(qual==="saude"){
     const nomeF = lente==="tudo" ? "de tudo junto"
       : (lente==="casa"?"do casal":lente==="consultorio"?"do consultório":"da confeitaria");
-    const hist=[]; let mm=mes;
-    for(let i=0;i<6;i++){ hist.unshift(saudeDoMes(mm)); mm=mesAnterior(mm); }
-    const sd=hist[hist.length-1];
+    const meses=mesesComDado(mesRef());
+    if(!saudeMes || saudeMes<MES_ZERO || saudeMes>mesRef()) saudeMes=mesRef();
+    const mes=saudeMes;                       /* o mes que a folha esta mostrando */
+    const hist=meses.slice(-12).map(saudeDoMes);
+    const sd=saudeDoMes(mes);
 
     $("#slTitulo").textContent="Saúde "+nomeF;
     $("#slNota").innerHTML="Entrou <b style='color:var(--good)'>"+brl(sd.entrou)+"</b> e custou <b>"+brl(sd.custoMes)+"</b> em "
@@ -1529,7 +1542,15 @@ function abrirLista(qual){
     const linha=(nome,det,valor,cor)=>'<div class="row"><div class="mid"><div class="t">'+nome+'</div>'
       +(det?'<div class="s">'+det+'</div>':'')+'</div><div class="amt"'+(cor?' style="color:'+cor+'"':'')+'>'+brl(valor)+'</div></div>';
 
-    let html='<div class="sechead" style="margin:4px 0 8px"><h2 class="sec">Este mês, por dentro</h2></div><div class="list">'
+    let html='';
+    if(meses.length>1){
+      html += '<div class="chips" id="saudeMeses" style="margin:0 0 14px">'
+        + meses.slice(-12).map(x=>'<button class="chip'+(x===mes?" on":"")+'" data-sm="'+x+'">'
+            + (x===mesRef()? "este mês" : nomeMes(x))+'</button>').join("")
+        + '</div>';
+    }
+    html += '<div class="sechead" style="margin:4px 0 8px"><h2 class="sec">'
+      + (mes===mesRef()?"Este mês":nomeMes(mes))+', por dentro</h2></div><div class="list">'
       + linha("Entrou","recebimentos e vendas lançados, sem estorno",sd.entrou,"var(--good)")
       + linha("Contas fixas e assinaturas","o que se repete todo mês nesta frente",-sd.fixas,"var(--bad)")
       + linha("Gastos lançados","compras à vista e parcelado fora do cartão",-sd.lancado,"var(--bad)")
@@ -1573,7 +1594,14 @@ function abrirLista(qual){
       + '<div class="nota">A barra de cima é o que entrou, a de baixo é o que o mês custou. '
       + 'O número da direita é a sobra. Mês sem lançamento aparece vazio, não quer dizer que não houve movimento.</div></div>';
 
+    html += '<div class="nota" style="padding:12px 2px 0;color:var(--ink3)">'
+      + 'O histórico começa em agosto de 2026, primeiro mês com contas fixas conferidas, '
+      + 'faturas batidas com documento e recebíveis datados. Antes disso o dado é parcial e a leitura enganaria. '
+      + 'A cada mês novo a lista cresce sozinha.</div>';
+
     $("#slConteudo").innerHTML=html;
+    const box=$("#saudeMeses");
+    if(box) box.querySelectorAll("[data-sm]").forEach(b=>b.onclick=()=>{ saudeMes=b.dataset.sm; abrirLista("saude"); });
     abrirSheet("#sheetLista");
   }
 

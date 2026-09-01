@@ -559,7 +559,7 @@ select.inp{appearance:none;background-image:linear-gradient(45deg,transparent 50
    A chave abaixo e publica de proposito: ela sozinha nao le nada.
    Quem decide o que cada pessoa enxerga e o proprio banco (RLS).
    ============================================================ */
-const VERSAO = "33";
+const VERSAO = "34";
 const SB  = "https://oihyhyyhessqnpkknhsi.supabase.co";
 const KEY = "sb_publishable_T7LERNVYS8mAK0tOlWfl5A_4-yCUjie";
 const LS_SESS = "nf.sessao", LS_FILA = "nf.fila", LS_CASAL = "nf.casal", LS_REJ = "nf.recusados", LS_FRENTE = "nf.frenteLanc";
@@ -920,6 +920,139 @@ function cartoesVisiveis(){
     || (dados.eventos||[]).some(x=>x.cartao===c.nome && x.frente===lente));
 }
 
+/* ---------------- linha do tempo do caixa, dia a dia ----------------
+   O folego contado por mes esconde o buraco do meio do mes: a fatura vence dia
+   10 e o recebivel da maquininha so cai dia 27. Aqui cada saida entra no dia em
+   que vence e cada entrada ja contratada entra no dia em que cai, entao da para
+   ver a data exata em que o caixa aperta, nao so o mes. */
+function ultimoDia(mes){ return new Date(+mes.slice(0,4), +mes.slice(5,7), 0).getDate(); }
+function diaDoMes(mes, dia){
+  const d = Math.min(Math.max(+dia||1, 1), ultimoDia(mes));
+  return mes.slice(0,8)+String(d).padStart(2,"0");
+}
+function diasEntre(a,b){
+  return Math.round((new Date(b+"T12:00:00") - new Date(a+"T12:00:00"))/86400000);
+}
+function dataCurta(iso){ return iso.slice(8,10)+"/"+iso.slice(5,7); }
+function dataLonga(iso){
+  const S=["janeiro","fevereiro","mar\u00e7o","abril","maio","junho","julho",
+           "agosto","setembro","outubro","novembro","dezembro"];
+  return (+iso.slice(8,10))+" de "+S[+iso.slice(5,7)-1];
+}
+const MES_DIAS = 30.44;
+
+function fluxoDiario(r, mesesHorizonte){
+  const H = mesesHorizonte || 36;
+  const hoje = hojeISO();
+  const evs = filtra(dados.eventos);
+  const mov = [];
+  const add = (data, valor, nome, det, tag)=>{
+    if(!valor) return;
+    mov.push({ data: (data < hoje ? hoje : data), valor, nome, det, tag });
+  };
+  let m = r.mes;
+  for(let i=0;i<H;i++){
+    const agora = (i===0);
+    /* contas do banco, no dia em que vencem. No mes de hoje, so as que faltam. */
+    r.contas.filter(c=>!c.cartao && cobraNesteMes(c,m)).forEach(c=>{
+      if(agora && r.pagosIds.has(c.id)) return;
+      add(diaDoMes(m, c.dia), -(+c.valor), c.descricao,
+          "conta fixa \u00b7 "+rotulo(c.frente), "fixa");
+    });
+    /* faturas, no dia do vencimento de cada cartao. A fatura ja contem
+       assinaturas e compras avulsas, entao nada aqui repete o de cima. */
+    cartoesVisiveis().forEach(cd=>{
+      const f = fatura(cd.nome, m);
+      const v = f.pago ? f.aposPago : f.total;
+      add(diaDoMes(m, cd.dia_venc||10), -v, "Fatura "+cd.nome,
+          (f.pago ? "lan\u00e7ado depois de a fatura ser paga" : "vence dia "+(cd.dia_venc||10)), "fatura");
+    });
+    m = mesSeguinte(m);
+  }
+  const limite = m;
+  /* lancamentos com data propria. Cartao nao entra aqui: ja veio pela fatura.
+     Data de hoje para tras ja esta refletida no saldo conferido. */
+  evs.forEach(e=>{
+    if(e.forma==="cartao") return;
+    if(e.data <= hoje || e.data >= limite) return;
+    if(e.tipo==="gasto")
+      add(e.data, -(+e.valor), e.descricao||"Gasto", "lan\u00e7ado \u00b7 "+rotulo(e.frente), "gasto");
+    else
+      add(e.data, +(+e.valor), e.descricao||"Entrada",
+          (e.forma==="maquininha" ? "maquininha" : "entrada")+" \u00b7 "+rotulo(e.frente), "entrada");
+  });
+  /* no mesmo dia, o dinheiro que sai vem antes do que entra: e a leitura
+     prudente, e a que evita dizer que fecha um dia que na pratica nao fecha */
+  mov.sort((a,b)=> a.data<b.data ? -1 : a.data>b.data ? 1 : (a.valor - b.valor));
+
+  let saldo = r.caixa;
+  const linha = [];
+  let quebra = null;
+  const porMes = {};
+  mov.forEach(x=>{
+    saldo += x.valor;
+    const reg = { data:x.data, valor:x.valor, nome:x.nome, det:x.det, tag:x.tag, saldo:saldo };
+    linha.push(reg);
+    if(saldo < 0 && !quebra) quebra = { data:x.data, falta:-saldo, nome:x.nome };
+    const k = x.data.slice(0,8)+"01";
+    const o = porMes[k] || (porMes[k] = { m:k, entrou:0, saiu:0, fim:0, baixo:Infinity, baixoData:null });
+    if(x.valor>0) o.entrou += x.valor; else o.saiu += -x.valor;
+    o.fim = saldo;
+    if(saldo < o.baixo){ o.baixo = saldo; o.baixoData = x.data; }
+  });
+  const dias = quebra ? diasEntre(hoje, quebra.data) : diasEntre(hoje, limite);
+
+  /* O dia mais apertado e o menor saldo de FIM DE DIA, e so vale enquanto o
+     caixa ainda fecha. Fim de dia porque dentro do dia o saldo oscila com a
+     ordem em que as coisas caem, e isso nao e um aperto de verdade. */
+  let baixo = { data: hoje, saldo: r.caixa, nome: "hoje" };
+  const paraAntes = quebra ? quebra.data : null;
+  for(let k=0;k<linha.length;k++){
+    const x = linha[k];
+    if(paraAntes && x.data >= paraAntes) break;
+    const fimDoDia = (k===linha.length-1) || linha[k+1].data!==x.data;
+    if(fimDoDia && x.saldo < baixo.saldo) baixo = { data:x.data, saldo:x.saldo, nome:x.nome };
+  }
+
+  /* Quanto precisa entrar de venda nova, por mes, para o caixa nao furar em
+     doze meses. Entra no dia 28, que e quando a maquininha costuma pagar, e o
+     dia 28 e tarde no mes: se fecha assim, fecha em qualquer data melhor. */
+  const fim12 = somaMeses(hoje, 12);
+  const simula = (extra)=>{
+    let sd = r.caixa, pior = sd, i = 0;
+    let mm = r.mes, alvo = diaDoMes(mm, 28);
+    while(alvo < hoje){ mm = mesSeguinte(mm); alvo = diaDoMes(mm, 28); }
+    for(let k=0;k<mov.length;k++){
+      const x = mov[k];
+      if(x.data > fim12) break;
+      while(alvo <= x.data && alvo <= fim12){
+        sd += extra; mm = mesSeguinte(mm); alvo = diaDoMes(mm, 28);
+      }
+      sd += x.valor;
+      if(sd < pior) pior = sd;
+    }
+    return pior;
+  };
+  let precisa = null;
+  if(simula(0) < 0){
+    let lo = 0, hi = 50000;
+    while(simula(hi) < 0 && hi < 400000) hi *= 2;
+    if(simula(hi) >= 0){
+      for(let k=0;k<40;k++){ const mid=(lo+hi)/2; if(simula(mid) >= 0) hi = mid; else lo = mid; }
+      precisa = hi;
+    }
+  }
+  /* Lente sem conta propria, como a confeitaria, cujo dinheiro fica nas contas
+     do casal: a linha do tempo existe mas nao ha caixa para consumir, entao o
+     folego dali nao significa nada e e melhor dizer isso do que mostrar zero. */
+  const semCaixa = r.caixa <= 0;
+
+  return { inicio:r.caixa, mov:linha, porMes:Object.keys(porMes).map(k=>porMes[k]),
+           baixo, quebra, limite, hoje, precisa, semCaixa,
+           dias, meses: dias/MES_DIAS, acabou: !!quebra,
+           entraTotal: linha.filter(x=>x.valor>0).reduce((a,x)=>a+x.valor,0) };
+}
+
 function resumo(){
   const mes=mesRef();
   const saldos=filtra(dados.saldos);
@@ -1045,6 +1178,7 @@ function pintar(){
     carregar().finally(function(){ recarregandoMes=false; });
   }
   const r=resumo();
+  const fx=fluxoDiario(r);
   const nomeLente=(FRENTES.find(f=>f.id===lente)||{}).nome;
   const mesAtual=mesRef();
 
@@ -1106,11 +1240,24 @@ function pintar(){
         : brl(r.faltaBanco)+" em contas do banco, "+brl(r.faltaFaturas)+" em faturas"
           + (proxConta ? " \u00b7 pr\u00f3xima: "+proxConta.descricao+", dia "+proxConta.dia : "")}</div></div>
 
-    <div class="card abre" data-p="folego"><div class="k">CAIXA AGUENTA</div>
-      <div class="v sm ${r.meses>=6?"good":r.meses>=3?"warn":"bad"}">${r.meses>0? r.meses.toFixed(1).replace(".",",")+" meses" : "\u2014"}</div>
-      <div class="n">${r.folego.acabou
-        ? "com contas e cart\u00f5es, sem entrar nada, acaba em "+nomeMes(r.folego.ate)
-        : "passa de cinco anos com o que est\u00e1 previsto"}</div></div>
+    <div class="card full abre" data-p="folego"><div class="k">CAIXA AGUENTA</div>
+      <div class="v sm ${fx.semCaixa?"":fx.meses>=6?"good":fx.meses>=3?"warn":"bad"}">${
+        fx.semCaixa ? "\u2014"
+        : fx.acabou ? fx.meses.toFixed(1).replace(".",",")+" meses" : "mais de "+Math.floor(fx.meses)+" meses"}</div>
+      <div class="n">${ fx.semCaixa
+        ? "esta frente n\u00e3o tem conta pr\u00f3pria: o dinheiro dela fica nas contas do casal. "
+          + "O f\u00f4lego s\u00f3 faz sentido na lente <b>Tudo</b>."
+        :
+        "com o caixa de hoje e o que j\u00e1 est\u00e1 datado para cair, <b>sem nenhuma venda nova</b>: "
+        + (fx.acabou
+            ? "n\u00e3o fecha em <b style='color:var(--bad)'>"+dataLonga(fx.quebra.data)+"</b>, faltando "
+              + brl(fx.quebra.falta)+" para pagar "+fx.quebra.nome
+            : "nada fica descoberto")
+        + " \u00b7 dia mais apertado <b>"+dataCurta(fx.baixo.data)+"</b>, sobrando "+brl(fx.baixo.saldo)
+        + (fx.precisa!=null
+            ? " \u00b7 para atravessar doze meses, precisa entrar <b>"+brl0(fx.precisa)+" por m\u00eas</b>"
+            : " \u00b7 atravessa doze meses sem precisar de venda nova")
+      }</div></div>
 
     <div class="card abre" data-p="media"><div class="k">SAI POR M\u00caS, NA M\u00c9DIA</div>
       <div class="v sm">${brl(r.compromissoMedio)}</div>
@@ -1607,38 +1754,108 @@ function abrirLista(qual){
     abrirSheet("#sheetLista");
   }
 
-  /* ---------- quanto tempo o caixa aguenta ---------- */
+  /* ---------- quanto tempo o caixa aguenta, dia a dia ---------- */
   if(qual==="folego"){
-    const linhas=[]; let saldo=r.caixa, m=mes;
-    for(let i=0;i<18;i++){
-      const custo = (i===0) ? r.faltaTotal : r.compromissoDoMes(m);
-      const antes=saldo;
-      const cobre = saldo>=custo;
-      saldo = cobre ? saldo-custo : 0;
-      linhas.push({m,custo,antes,depois:saldo,cobre});
-      if(!cobre) break;
-      m=mesSeguinte(m);
+    const fx = fluxoDiario(r);
+    const hoje = fx.hoje;
+    $("#slTitulo").textContent="At\u00e9 quando o caixa aguenta";
+    if(fx.semCaixa){
+      $("#slNota").innerHTML="Esta frente n\u00e3o tem conta banc\u00e1ria pr\u00f3pria cadastrada: "
+        + "o dinheiro dela entra e sai pelas contas do casal. Sem caixa pr\u00f3prio, "
+        + "\"at\u00e9 quando aguenta\" n\u00e3o significa nada aqui."
+        + "<br><br>Para ver o f\u00f4lego de verdade, troque a lente para <b>Tudo</b>. "
+        + "Para ver como esta frente vai indo, abra o card de <b>sa\u00fade do m\u00eas</b>, "
+        + "que compara o que entra com o que custa sem depender de saldo em conta.";
+      $("#slConteudo").innerHTML="";
+      abrirSheet("#sheetLista");
+      return;
     }
-    const ultimo=linhas[linhas.length-1];
-    $("#slTitulo").textContent="Até quando o caixa aguenta";
-    $("#slNota").innerHTML="Isto responde uma pergunta só: se <b>não entrar mais nada</b>, a partir de hoje, "
-      + "quanto tempo o dinheiro que vocês têm paga tudo que já está combinado. "
-      + "Entra aqui: contas fixas de todo mês, assinaturas, e as parcelas de cartão já compradas. "
-      + "<b>Não</b> entra: consulta, plantão, venda da confeitaria, nada que ainda vai entrar."
-      + "<br><br>Começando com <b>"+brl(r.caixa)+"</b> em caixa"
-      + (r.receber>0 ? ", e sem contar os "+brl(r.receber)+" a receber" : "")
-      + ". " + (ultimo && !ultimo.cobre
-          ? "O dinheiro acaba em <b style='color:var(--bad)'>"+nomeMes(ultimo.m)+"</b>, quando faltariam "
-            + brl(ultimo.custo-ultimo.antes)+" para fechar o mês."
-          : "Passa de "+linhas.length+" meses sem apertar.")
-      + (r.receber>0 ? "<br><br>Contando os "+brl(r.receber)+" que ainda vão cair, o fôlego vai para <b>"
-          + r.folegoComReceber.meses.toFixed(1).replace(".",",")+" meses</b>." : "");
-    $("#slConteudo").innerHTML='<div class="list">'+linhas.map(l=>
-      '<div class="row"><div class="mid"><div class="t">'+nomeMes(l.m)+'</div>'
-      + '<div class="s" style="color:'+(l.cobre?"var(--ink3)":"var(--bad)")+'">'
-      + (l.cobre ? "sobra "+brl(l.depois)+" depois de pagar" : "faltam "+brl(l.custo-l.antes))+'</div></div>'
-      + '<div class="amt" style="color:'+(l.cobre?"var(--ink)":"var(--bad)")+'">'+brl(l.custo)+'</div></div>'
-    ).join("")+'</div>';
+
+    $("#slNota").innerHTML =
+      "Cada conta entra no <b>dia em que vence</b> e cada recebimento no <b>dia em que cai</b>. "
+      + "Por isso o n\u00famero n\u00e3o \u00e9 uma m\u00e9dia do m\u00eas: \u00e9 o saldo de verdade, dia por dia."
+      + "<br><br>Entra como sa\u00edda: contas fixas no dia do vencimento, faturas de cart\u00e3o no dia do "
+      + "vencimento de cada cart\u00e3o, e gastos futuros j\u00e1 lan\u00e7ados. "
+      + "Entra como entrada: <b>s\u00f3 o que j\u00e1 est\u00e1 contratado e datado</b>, como as parcelas da maquininha. "
+      + "Consulta que ainda vai acontecer, plantão e venda futura da confeitaria <b>n\u00e3o</b> entram."
+      + "<br><br>Come\u00e7a com <b>"+brl(fx.inicio)+"</b> em caixa e "+brl(fx.entraTotal)+" j\u00e1 datados para cair. "
+      + (fx.acabou
+          ? "O caixa fica descoberto em <b style='color:var(--bad)'>"+dataLonga(fx.quebra.data)+"</b>, "
+            + "faltando "+brl(fx.quebra.falta)+" para pagar "+fx.quebra.nome+". "
+            + "S\u00e3o <b>"+fx.meses.toFixed(1).replace(".",",")+" meses</b> de f\u00f4lego."
+          : "Nada fica descoberto em todo o horizonte projetado.")
+      + " Sem contar entrada nenhuma, nem as j\u00e1 datadas, o f\u00f4lego cai para <b>"
+      + (r.folego.acabou ? r.meses.toFixed(1).replace(".",",")+" meses" : "mais de cinco anos") + "</b>."
+      + (fx.precisa!=null
+          ? "<br><br><b>O n\u00famero que importa:</b> para o caixa n\u00e3o furar em nenhum dia dos pr\u00f3ximos "
+            + "doze meses, precisa entrar <b>"+brl(fx.precisa)+" por m\u00eas</b> de venda nova, l\u00edquido, "
+            + "al\u00e9m do que j\u00e1 est\u00e1 datado. A conta sup\u00f5e o dinheiro caindo no dia 28, que \u00e9 "
+            + "tarde no m\u00eas: entrando mais cedo, sobra folga."
+          : "");
+
+    let html = "";
+
+    /* o aperto: menor saldo do caminho */
+    const apCor = fx.baixo.saldo < 0 ? "var(--bad)" : fx.baixo.saldo < 10000 ? "var(--warn)" : "var(--good)";
+    html += '<div class="sechead" style="margin:2px 0 8px"><h2 class="sec">O dia mais apertado</h2></div>'
+      + '<div class="list"><div class="row"><div class="mid">'
+      + '<div class="t">'+dataLonga(fx.baixo.data)+'</div>'
+      + '<div class="s">menor saldo de todo o caminho, logo depois de '+fx.baixo.nome+'</div></div>'
+      + '<div class="amt" style="color:'+apCor+'">'+brl(fx.baixo.saldo)+'</div></div></div>';
+
+    /* mes a mes: entrou, saiu, como termina */
+    /* depois da quebra o saldo so afunda e o numero deixa de significar algo
+       real, porque ninguem fica parado vendo. Mostra dois meses alem e para. */
+    const corte = fx.quebra ? somaMeses(fx.quebra.data.slice(0,8)+"01", 3) : null;
+    const pm = fx.porMes.filter(o=> !corte || o.m < corte).slice(0, 18);
+    html += '<div class="sechead" style="margin:16px 0 8px"><h2 class="sec">M\u00eas a m\u00eas</h2>'
+      + '<span class="add" style="color:var(--ink3)">saldo no fim</span></div><div class="list">'
+      + pm.map(o=>{
+          const cor = o.fim < 0 ? "var(--bad)" : o.fim < 10000 ? "var(--warn)" : "var(--ink)";
+          const alerta = o.baixo < 0 && o.fim >= 0;
+          return '<div class="row"><div class="mid"><div class="t">'+nomeMes(o.m)+'</div>'
+            + '<div class="s"'+(alerta?' style="color:var(--bad)"':'')+'>'
+            + (o.entrou>0 ? "entra "+brl0(o.entrou)+", " : "n\u00e3o entra nada, ")
+            + "sai "+brl0(o.saiu)
+            + (alerta ? " \u00b7 fura no dia "+o.baixoData.slice(8,10)+" e se recomp\u00f5e" : "")
+            + '</div></div>'
+            + '<div class="amt" style="color:'+cor+'">'+brl0(o.fim)+'</div></div>';
+        }).join("") + '</div>';
+
+    /* dia a dia dos proximos 90 dias */
+    let ate = somaDias(hoje, 90);
+    if(fx.quebra){ const lim = somaDias(fx.quebra.data, 15); if(lim < ate) ate = lim; }
+    const prox = fx.mov.filter(x=>x.data<=ate);
+    if(prox.length){
+      html += '<div class="sechead" style="margin:16px 0 8px"><h2 class="sec">Dia a dia, at\u00e9 '
+        + dataCurta(ate)+'</h2><span class="add" style="color:var(--ink3)">sobra depois</span></div>'
+        + '<div class="list">';
+      let diaAnt = "";
+      prox.forEach(x=>{
+        if(x.data!==diaAnt){
+          diaAnt = x.data;
+          html += '<div class="row" style="background:var(--fundo2,transparent);opacity:.65">'
+            + '<div class="mid"><div class="s" style="font-weight:700">'
+            + (x.data===hoje ? "Hoje" : dataLonga(x.data)) + '</div></div><div class="amt"></div></div>';
+        }
+        const cor = x.valor>0 ? "var(--good)" : "var(--ink)";
+        const corS = x.saldo<0 ? "var(--bad)" : x.saldo<10000 ? "var(--warn)" : "var(--ink3)";
+        html += '<div class="row"><div class="mid"><div class="t">'+x.nome+'</div>'
+          + '<div class="s">'+x.det+'</div></div>'
+          + '<div class="amt" style="text-align:right">'
+          + '<div style="color:'+cor+'">'+(x.valor>0?"+":"")+brl(x.valor)+'</div>'
+          + '<div class="s" style="color:'+corS+'">'+brl0(x.saldo)+'</div>'
+          + '</div></div>';
+      });
+      html += '</div>';
+    }
+
+    html += '<div class="nota" style="margin-top:14px">O saldo da direita \u00e9 o que sobra '
+      + 'depois daquele movimento. No mesmo dia, o que sai conta antes do que entra, que \u00e9 a '
+      + 'leitura prudente. Se um valor aqui estiver errado, o lugar de corrigir \u00e9 a conta fixa, '
+      + 'a fatura ou o lan\u00e7amento de origem.</div>';
+
+    $("#slConteudo").innerHTML = html;
   }
 
   /* ---------- quanto sai por mes, na media ---------- */

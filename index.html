@@ -559,7 +559,7 @@ select.inp{appearance:none;background-image:linear-gradient(45deg,transparent 50
    A chave abaixo e publica de proposito: ela sozinha nao le nada.
    Quem decide o que cada pessoa enxerga e o proprio banco (RLS).
    ============================================================ */
-const VERSAO = "32";
+const VERSAO = "33";
 const SB  = "https://oihyhyyhessqnpkknhsi.supabase.co";
 const KEY = "sb_publishable_T7LERNVYS8mAK0tOlWfl5A_4-yCUjie";
 const LS_SESS = "nf.sessao", LS_FILA = "nf.fila", LS_CASAL = "nf.casal", LS_REJ = "nf.recusados", LS_FRENTE = "nf.frenteLanc";
@@ -1580,7 +1580,8 @@ function abrirLista(qual){
     }
 
     const maior=Math.max(1,...hist.map(h=>Math.max(h.entrou,h.custoMes)));
-    html += '<div class="sechead"><h2 class="sec">Últimos seis meses</h2>'
+    html += '<div class="sechead"><h2 class="sec">'
+      + (hist.length===1 ? "Este mês" : "Mês a mês, desde "+nomeMes(hist[0].m)) + '</h2>'
       + '<span class="legenda2"><span><i style="background:var(--serieEntra)"></i>entrou</span>'
       + '<span><i style="background:var(--serieSai)"></i>custou</span></span></div>'
       + '<div class="card full graf">'
@@ -1592,7 +1593,8 @@ function abrirLista(qual){
           + '<div class="val" style="color:'+(h.operacional>=0?"var(--good)":"var(--bad)")+'">'
           + (h.operacional>=0?"+":"\u2212")+brl0(Math.abs(h.operacional))+'</div></div>').join("")
       + '<div class="nota">A barra de cima é o que entrou, a de baixo é o que o mês custou. '
-      + 'O número da direita é a sobra. Mês sem lançamento aparece vazio, não quer dizer que não houve movimento.</div></div>';
+      + 'O número da direita é a sobra. Mês sem lançamento aparece vazio, não quer dizer que não houve movimento. '
+      + 'Toque num mês acima para abrir o detalhe dele.</div></div>';
 
     html += '<div class="nota" style="padding:12px 2px 0;color:var(--ink3)">'
       + 'O histórico começa em agosto de 2026, primeiro mês com contas fixas conferidas, '

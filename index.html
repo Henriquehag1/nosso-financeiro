@@ -562,7 +562,7 @@ select.inp{appearance:none;background-image:linear-gradient(45deg,transparent 50
    A chave abaixo e publica de proposito: ela sozinha nao le nada.
    Quem decide o que cada pessoa enxerga e o proprio banco (RLS).
    ============================================================ */
-const VERSAO = "35";
+const VERSAO = "36";
 const SB  = "https://oihyhyyhessqnpkknhsi.supabase.co";
 const KEY = "sb_publishable_T7LERNVYS8mAK0tOlWfl5A_4-yCUjie";
 const LS_SESS = "nf.sessao", LS_FILA = "nf.fila", LS_CASAL = "nf.casal", LS_REJ = "nf.recusados", LS_FRENTE = "nf.frenteLanc", LS_CONTA_PG = "nf.contaPagamento";
@@ -776,7 +776,7 @@ async function carregar(){
       rest("conta_fixa?select=id,descricao,valor,dia,frente,cartao,periodicidade,mes_venc,varia&ativo=is.true&order=dia.asc"),
       rest("parcela_futura?select=id,cartao,mes_ref,valor,frente,pago,pago_em,valor_pago,pago_conta_id&order=mes_ref.asc"),
       rest("conta_saldo?select=id,nome,frente,tipo,valor,atualizado_em&order=valor.desc"),
-      rest("evento?select=id,data,valor,tipo,frente,descricao,forma,cartao,categoria_id,origem,obs,criado_por,parcelas,parcela_num,grupo,criado_em&data=gte."+janelaInicio()+"&order=data.desc,criado_em.desc&limit=2000"),
+      rest("evento?select=id,data,valor,tipo,frente,descricao,forma,cartao,categoria_id,origem,obs,criado_por,parcelas,parcela_num,grupo,criado_em,baixado_em,baixa_conta_id,baixa_receber_id&data=gte."+janelaInicio()+"&order=data.desc,criado_em.desc&limit=2000"),
       rest("pagamento_conta?select=conta_fixa_id,mes_ref,valor,pago_conta_id&mes_ref=eq."+mes),
       rest("cartao?select=id,nome,dia_venc,dia_fechamento,limite,frente&ativo=is.true&order=nome.asc"),
       rest("fatura_conferida?select=id,cartao,mes_ref,valor_real,valor_app")
@@ -788,6 +788,8 @@ async function carregar(){
     ultimaCarga = Date.now();
     $("#btnSair").textContent = (eu.nome||"") + " · sair";
     montarLentes(); pintar();
+    /* o que venceu desde a ultima abertura entra no caixa agora */
+    if(await conciliarCaixa()) pintar();
   }catch(e){
     if(e.status===401){ limparSessao(); location.reload(); return; }
     toast("Não consegui atualizar: "+e.message,true);
@@ -844,6 +846,63 @@ async function moverSaldo(contaId, delta){
 function faturaCheia(nomeCartao, mes){
   const l=lente; lente="tudo";
   try{ return fatura(nomeCartao, mes); } finally{ lente=l; }
+}
+
+/* ---------------- baixa: o lancamento vira dinheiro de verdade ----------------
+   Um gasto no pix sai da conta na hora. Um recebimento da maquininha entra no
+   dia em que cai, nao no dia da venda. Sem isto o dinheiro sumia: no dia em que
+   a parcela caia, ela saia da projecao de futuro e nao entrava em lugar nenhum.
+   Cada lancamento fora do cartao e baixado uma vez so, no dia em que acontece.
+   Compra no cartao nunca passa por aqui: ela sai da conta quando a fatura e paga. */
+function contaReceber(frente){
+  return (dados.saldos||[]).filter(s=>s.tipo==="a_receber").find(s=>s.frente===frente) || null;
+}
+let conciliando=false;
+async function conciliarCaixa(){
+  if(conciliando) return 0;
+  const hoje=hojeISO();
+  const pend=(dados.eventos||[]).filter(e=>!e.baixado_em && e.forma!=="cartao" && e.data<=hoje);
+  if(!pend.length) return 0;
+  conciliando=true;
+  let feitos=0, liquido=0;
+  try{
+    for(const e of pend){
+      const caixa = contaPadrao(e.frente);
+      if(!caixa) break;
+      const ent = e.tipo==="entrada";
+      const v = +(+e.valor).toFixed(2);
+      /* recebivel da maquininha deixa de ser "a receber" e vira dinheiro */
+      const rec = (ent && e.forma==="maquininha") ? contaReceber(e.frente) : null;
+      const agora = new Date().toISOString();
+      /* a trava esta no filtro: so quem conseguir marcar baixado_em mexe no
+         saldo. Assim os dois celulares nao creditam o mesmo recebimento. */
+      const ok = await rest("evento?id=eq."+e.id+"&baixado_em=is.null",
+        {method:"PATCH",headers:{Prefer:"return=representation"},
+         body:JSON.stringify({baixado_em:agora, baixa_conta_id:caixa.id,
+                              baixa_receber_id: rec?rec.id:null})});
+      if(!ok || !ok.length){ e.baixado_em = agora; continue; }
+      await moverSaldo(caixa.id, ent ? v : -v);
+      if(rec) await moverSaldo(rec.id, -v);
+      e.baixado_em=agora; e.baixa_conta_id=caixa.id; e.baixa_receber_id=rec?rec.id:null;
+      feitos++; liquido += ent ? v : -v;
+    }
+  }catch(err){ toast("Não consegui atualizar o caixa: "+err.message,true); }
+  finally{ conciliando=false; }
+  if(feitos) toast(feitos+(feitos===1?" lançamento entrou":" lançamentos entraram")
+                 +" no caixa: "+(liquido>=0?"+":"")+brl(liquido)+".");
+  return feitos;
+}
+/* Desfaz a baixa de um lancamento, para poder excluir ou mudar o valor sem
+   deixar o saldo torto. */
+async function desfazerBaixa(e){
+  if(!e || !e.baixa_conta_id) return;
+  const v = +(+e.valor).toFixed(2);
+  const ent = e.tipo==="entrada";
+  await moverSaldo(e.baixa_conta_id, ent ? -v : v);
+  if(e.baixa_receber_id) await moverSaldo(e.baixa_receber_id, v);
+  await rest("evento?id=eq."+e.id,{method:"PATCH",headers:{Prefer:"return=minimal"},
+    body:JSON.stringify({baixado_em:null, baixa_conta_id:null, baixa_receber_id:null})});
+  e.baixado_em=null; e.baixa_conta_id=null; e.baixa_receber_id=null;
 }
 
 /* A lente vale tambem dentro da fatura: na lente do consultorio, a fatura do
@@ -1676,9 +1735,24 @@ function abrirLista(qual){
     const NOMETIPO={conta:"conta corrente",reserva:"reserva, rende",especie:"em espécie",a_receber:"ainda vai cair"};
     const soma=a=>a.reduce((x,s)=>x+ +s.valor,0);
     $("#slTitulo").textContent="Onde está o dinheiro";
+    /* a receber registrado tem que ser igual a soma dos recebimentos com data
+       futura. Se abrir diferenca, um dos dois esta errado e o folego mente. */
+    const hj=hojeISO();
+    const futuros = filtra(dados.eventos)
+      .filter(e=>e.tipo==="entrada" && e.forma!=="cartao" && e.data>hj)
+      .reduce((a,e)=>a+ +e.valor,0);
+    const difRec = +(soma(aReceber) - futuros).toFixed(2);
     $("#slNota").innerHTML="Em caixa hoje <b>"+brl(soma(emCaixa))+"</b>"
       + (aReceber.length? ", mais <b>"+brl(soma(aReceber))+"</b> que ainda vai cair" : "")
-      + ". Toque em qualquer linha para corrigir o valor.";
+      + ". Toque em qualquer linha para corrigir o valor."
+      + "<br><br>O caixa se move sozinho: pagar uma conta ou fatura tira o valor da conta, "
+      + "e um recebimento entra no dia em que cai, saindo de \"ainda vai cair\". "
+      + "Compra no cartão não sai da conta na hora, sai quando a fatura é paga."
+      + (Math.abs(difRec) > 0.02
+          ? "<br><br><b style='color:var(--warn)'>Conferir:</b> o \"ainda vai cair\" registrado está "
+            + brl(Math.abs(difRec)) + (difRec>0 ? " acima" : " abaixo")
+            + " da soma dos recebimentos com data futura, que é "+brl(futuros)+"."
+          : "");
     add.textContent="+ conta"; add.onclick=()=>{ fecharSheet("#sheetLista"); abrirSaldo(null); };
     const diasDe=(iso)=>{ if(!iso) return null; const d=new Date(iso); if(isNaN(d)) return null;
       return Math.floor((Date.now()-d.getTime())/86400000); };
@@ -2895,6 +2969,10 @@ $("#fSalvar").onclick = async ()=>{
       if(editandoParcelado){
         for(const k of ["valor","cartao","forma","data","frente"]) delete corpo[k];
       }
+      /* se ja tinha mexido no caixa, desfaz com o valor antigo antes de gravar
+         o novo; o conciliador refaz na sequencia com o valor certo */
+      const antigo = dados.eventos.find(x=>x.id===form.id);
+      if(antigo && antigo.baixa_conta_id) await desfazerBaixa(antigo);
       await rest("evento?id=eq."+form.id,{method:"PATCH",headers:{Prefer:"return=minimal"},body:JSON.stringify(corpo)});
       toast("Lançamento atualizado.");
     }else{
@@ -2981,6 +3059,8 @@ $("#fExcluir").onclick = async ()=>{
       const n = ev.parcelas || irmaos.length || 1;
       const seg = irmaos.find(x=>(x.parcela_num||0)>1);
       const porMes = +((seg || primeiro).valor);
+      /* devolve ao caixa o que ja tinha entrado ou saido das parcelas vencidas */
+      for(const x of irmaos) await desfazerBaixa(x);
       await rest("evento?grupo=eq."+ev.grupo,{method:"DELETE",headers:{Prefer:"return=minimal"}});
       if(ev.forma==="cartao" && ev.cartao){
         await api("/rest/v1/rpc/somar_parcelas",{method:"POST",body:JSON.stringify({
@@ -2989,6 +3069,7 @@ $("#fExcluir").onclick = async ()=>{
       }
       fecharSheet("#sheet"); toast("Compra parcelada excluída por inteiro: "+n+" parcelas saíram das faturas.");
     }else{
+      await desfazerBaixa(ev);
       await rest("evento?id=eq."+form.id,{method:"DELETE",headers:{Prefer:"return=minimal"}});
       fecharSheet("#sheet"); toast("Lançamento excluído.");
     }

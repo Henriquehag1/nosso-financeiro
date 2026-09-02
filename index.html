@@ -265,8 +265,10 @@ select.inp{appearance:none;background-image:linear-gradient(45deg,transparent 50
     <div class="list" id="eventos"></div>
 
     <p style="color:var(--ink3);font-size:11px;margin:22px 0 8px;text-align:center" id="rodape"></p>
-    <p style="text-align:center;margin:0 0 26px"><button class="vermais" id="btnBackup"
-       style="font-size:12px;color:var(--ink3)">baixar cópia de segurança</button></p>
+    <p style="text-align:center;margin:0 0 26px">
+       <button class="vermais" id="btnConferir" style="font-size:12px;color:var(--ink3)">conferir o sistema</button>
+       <span style="color:var(--ink3);font-size:12px"> · </span>
+       <button class="vermais" id="btnBackup" style="font-size:12px;color:var(--ink3)">baixar cópia de segurança</button></p>
   </div>
 </section>
 
@@ -562,7 +564,7 @@ select.inp{appearance:none;background-image:linear-gradient(45deg,transparent 50
    A chave abaixo e publica de proposito: ela sozinha nao le nada.
    Quem decide o que cada pessoa enxerga e o proprio banco (RLS).
    ============================================================ */
-const VERSAO = "36";
+const VERSAO = "37";
 const SB  = "https://oihyhyyhessqnpkknhsi.supabase.co";
 const KEY = "sb_publishable_T7LERNVYS8mAK0tOlWfl5A_4-yCUjie";
 const LS_SESS = "nf.sessao", LS_FILA = "nf.fila", LS_CASAL = "nf.casal", LS_REJ = "nf.recusados", LS_FRENTE = "nf.frenteLanc", LS_CONTA_PG = "nf.contaPagamento";
@@ -832,14 +834,15 @@ function contaPadrao(frente){
   return doGrupo[0] || cs.slice().sort((a,b)=>+b.valor-+a.valor)[0];
 }
 function nomeCurto(s){ return s ? String(s.nome).split(" (")[0] : ""; }
+/* A soma acontece no banco, nao aqui. Ler o saldo, somar no aparelho e gravar
+   perde uma das duas escritas quando os dois celulares mexem no mesmo segundo,
+   e o dinheiro some sem deixar rastro. */
 async function moverSaldo(contaId, delta){
+  if(!contaId || !delta) return;
+  const novo = await api("/rest/v1/rpc/mover_saldo",{method:"POST",
+    body:JSON.stringify({p_id:+contaId, p_delta:+(+delta).toFixed(2)})});
   const s=(dados.saldos||[]).find(x=>String(x.id)===String(contaId));
-  if(!s || !delta) return;
-  const novo = +((+s.valor) + delta).toFixed(2);
-  const agora = new Date().toISOString();
-  await rest("conta_saldo?id=eq."+s.id,{method:"PATCH",headers:{Prefer:"return=minimal"},
-    body:JSON.stringify({valor:novo, atualizado_em:agora})});
-  s.valor=novo; s.atualizado_em=agora;
+  if(s && novo!=null){ s.valor=+novo; s.atualizado_em=new Date().toISOString(); }
 }
 /* A fatura inteira, sem a lente. Marcar como paga na lente do consultorio
    nao pode debitar so a fatia do consultorio de um cartao do casal. */
@@ -861,9 +864,15 @@ let conciliando=false;
 async function conciliarCaixa(){
   if(conciliando) return 0;
   const hoje=hojeISO();
-  const pend=(dados.eventos||[]).filter(e=>!e.baixado_em && e.forma!=="cartao" && e.data<=hoje);
-  if(!pend.length) return 0;
   conciliando=true;
+  /* busca direto no banco: a lista da tela carrega so 12 meses e 2000 linhas,
+     e um pendente fora dessa janela ficaria preso para sempre */
+  let pend=[];
+  try{
+    pend = await rest("evento?select=id,data,valor,tipo,frente,forma,descricao"
+      + "&baixado_em=is.null&forma=neq.cartao&data=lte."+hoje+"&order=data.asc&limit=500") || [];
+  }catch(e){ conciliando=false; return 0; }
+  if(!pend.length){ conciliando=false; return 0; }
   let feitos=0, liquido=0;
   try{
     for(const e of pend){
@@ -880,10 +889,12 @@ async function conciliarCaixa(){
         {method:"PATCH",headers:{Prefer:"return=representation"},
          body:JSON.stringify({baixado_em:agora, baixa_conta_id:caixa.id,
                               baixa_receber_id: rec?rec.id:null})});
-      if(!ok || !ok.length){ e.baixado_em = agora; continue; }
+      if(!ok || !ok.length) continue;   /* outro aparelho baixou primeiro */
       await moverSaldo(caixa.id, ent ? v : -v);
       if(rec) await moverSaldo(rec.id, -v);
-      e.baixado_em=agora; e.baixa_conta_id=caixa.id; e.baixa_receber_id=rec?rec.id:null;
+      const local=(dados.eventos||[]).find(x=>x.id===e.id);
+      if(local){ local.baixado_em=agora; local.baixa_conta_id=caixa.id;
+                 local.baixa_receber_id=rec?rec.id:null; }
       feitos++; liquido += ent ? v : -v;
     }
   }catch(err){ toast("Não consegui atualizar o caixa: "+err.message,true); }
@@ -891,6 +902,13 @@ async function conciliarCaixa(){
   if(feitos) toast(feitos+(feitos===1?" lançamento entrou":" lançamentos entraram")
                  +" no caixa: "+(liquido>=0?"+":"")+brl(liquido)+".");
   return feitos;
+}
+/* Venda na maquininha vira "ainda vai cair" no ato. Sem isto o registrado
+   ficava parado enquanto os recebimentos futuros cresciam, e os dois numeros,
+   que precisam ser o mesmo, abriam diferenca a cada venda nova. */
+async function somarAoReceber(frente, valor){
+  const rec=contaReceber(frente);
+  if(rec && valor) await moverSaldo(rec.id, +(+valor).toFixed(2));
 }
 /* Desfaz a baixa de um lancamento, para poder excluir ou mudar o valor sem
    deixar o saldo torto. */
@@ -2376,6 +2394,107 @@ function pintarCartoes(){
 }
 $("#cdFechar").onclick=()=>fecharSheet("#sheetCartoes");
 
+/* ---------------- conferir o sistema ----------------
+   As contas que so eu conseguia rodar por SQL. Sem isto, um erro silencioso,
+   como o "ainda vai cair" descolando dos recebimentos, so apareceria quando
+   alguem fosse olhar. Aqui ele aparece em um toque. */
+async function conferirSistema(){
+  const hoje=hojeISO(), mes=mesRef(), fim=mesSeguinte(mes);
+  const achados=[];
+  const ok=(t,d)=>achados.push({bom:true, t, d});
+  const alerta=(t,d)=>achados.push({bom:false, t, d});
+
+  /* 1. ainda vai cair, conta por conta */
+  const contasRec=(dados.saldos||[]).filter(s=>s.tipo==="a_receber");
+  let recOk=true;
+  contasRec.forEach(rc=>{
+    const esperado=(dados.eventos||[]).filter(e=>e.tipo==="entrada" && e.forma!=="cartao"
+                       && e.frente===rc.frente && e.data>hoje)
+                     .reduce((a,e)=>a+ +e.valor,0);
+    const dif=+((+rc.valor)-esperado).toFixed(2);
+    if(Math.abs(dif)>0.02){ recOk=false;
+      alerta(nomeCurto(rc)+" não bate", "registrado "+brl(rc.valor)+", recebimentos futuros somam "
+        +brl(esperado)+", diferença de "+brl(Math.abs(dif))); }
+  });
+  if(recOk && contasRec.length) ok("Ainda vai cair confere", contasRec.length+" conta"
+    +(contasRec.length>1?"s batem":" bate")+" com os recebimentos datados");
+
+  /* 2. lancamento vencido que ainda nao mexeu no caixa */
+  let pend=[];
+  try{ pend = await rest("evento?select=id&baixado_em=is.null&forma=neq.cartao&data=lte."+hoje+"&limit=200") || []; }catch(e){}
+  if(pend.length) alerta(pend.length+" lançamento"+(pend.length>1?"s vencidos":" vencido")+" fora do caixa",
+    "já passou da data e não entrou nem saiu da conta. Feche e abra o app para aplicar");
+  else ok("Caixa em dia", "nada vencido esperando para entrar ou sair");
+
+  /* 3. saldo conferido ha muito tempo */
+  const velhos=(dados.saldos||[]).filter(s=>{
+    if(!s.atualizado_em || +s.valor===0) return false;
+    return (Date.now()-new Date(s.atualizado_em).getTime())/86400000 > 30;
+  });
+  if(velhos.length) alerta(velhos.length+" saldo"+(velhos.length>1?"s":"")+" sem conferir há mais de 30 dias",
+    velhos.map(nomeCurto).join(", ")+". O app só sabe do que passou por ele");
+  else ok("Saldos recentes", "todas as contas com dinheiro foram conferidas nos últimos 30 dias");
+
+  /* 4. saldo negativo */
+  const neg=(dados.saldos||[]).filter(s=>+s.valor<0);
+  if(neg.length) alerta("Saldo negativo em "+neg.map(nomeCurto).join(", "),
+    "ou faltou conferir com o banco, ou algo foi debitado duas vezes");
+
+  /* 5. fatura de mes passado ainda em aberto */
+  const atras=(dados.parcelas||[]).filter(p=>p.mes_ref<mes && !p.pago && +p.valor>0);
+  if(atras.length) alerta(atras.length+" fatura"+(atras.length>1?"s":"")+" de mês passado em aberto",
+    atras.map(p=>p.cartao+" de "+nomeMes(p.mes_ref)).join("; ")+". Isso infla a dívida");
+  else ok("Nenhuma fatura antiga aberta", "todo mês fechado está marcado como pago");
+
+  /* 6. conta do mes que ja venceu e nao foi marcada */
+  const diaHoje=new Date().getDate();
+  const r=resumo();
+  const vencidas=r.doBanco.filter(c=>!r.pagosIds.has(c.id) && c.dia<diaHoje);
+  if(vencidas.length) alerta(vencidas.length+" conta"+(vencidas.length>1?"s":"")+" venceu e não foi marcada",
+    vencidas.slice(0,4).map(c=>c.descricao+", dia "+c.dia).join("; "));
+  else ok("Contas do mês em dia", "nada vencido sem marcar");
+
+  /* 7. fatura paga sem o valor real */
+  const semValor=(dados.parcelas||[]).filter(p=>p.pago && p.mes_ref===mes && p.valor_pago==null);
+  if(semValor.length) alerta(semValor.length+" fatura paga sem o valor real",
+    "o app usou a projeção. Toque no valor na lista de contas para escrever o que o banco cobrou");
+
+  /* 8. aditividade das lentes */
+  const guarda=lente; let soma=0;
+  ["casa","consultorio","confeitaria"].forEach(f=>{ lente=f; soma+=resumo().faltaTotal; });
+  lente="tudo"; const total=resumo().faltaTotal; lente=guarda;
+  if(Math.abs(soma-total)>0.02) alerta("As três frentes não somam o total",
+    "casal mais consultório mais confeitaria dá "+brl(soma)+", e tudo junto dá "+brl(total));
+  else ok("As três frentes somam o total", "casal, consultório e confeitaria fecham em "+brl(total));
+
+  return achados;
+}
+$("#btnConferir").onclick = async ()=>{
+  const b=$("#btnConferir"), antes=b.textContent;
+  b.textContent="conferindo...";
+  try{
+    const a=await conferirSistema();
+    const ruins=a.filter(x=>!x.bom);
+    $("#slTitulo").textContent="Conferência do sistema";
+    $("#slNota").innerHTML = ruins.length
+      ? "<b style='color:var(--warn)'>"+ruins.length+(ruins.length>1?" pontos pedem":" ponto pede")
+        +" atenção.</b> O resto está fechado. Cada linha diz o que fazer."
+      : "<b style='color:var(--good)'>Está tudo fechado.</b> Nenhuma das "+a.length
+        +" checagens encontrou diferença.";
+    $("#slAdd").textContent=""; $("#slAdd").onclick=null;
+    $("#slConteudo").innerHTML='<div class="list">'+a.map(x=>
+      '<div class="row"><div class="ic '+(x.bom?"pago":"atras")+'">'+(x.bom?"\u2713":"!")+'</div>'
+      + '<div class="mid"><div class="t">'+x.t+'</div>'
+      + (x.d?'<div class="s" style="color:'+(x.bom?"var(--ink3)":"var(--warn)")+'">'+x.d+'</div>':'')
+      + '</div></div>').join("")+'</div>'
+      + '<div class="nota" style="margin-top:14px">Estas oito contas eram feitas por fora, no banco de dados. '
+      + 'Agora rodam daqui, a qualquer momento. Vale passar o olho depois de um dia de muitos lançamentos, '
+      + 'ou quando um número parecer estranho.</div>';
+    abrirSheet("#sheetLista");
+  }catch(e){ toast("Não consegui conferir: "+e.message,true); }
+  finally{ b.textContent=antes; }
+};
+
 /* Cópia de segurança fora do Supabase. Baixa um arquivo com tudo, para o caso
    de o banco sumir, alguém apagar sem querer, ou a conta ser perdida. */
 $("#btnBackup").onclick = async ()=>{
@@ -2989,6 +3108,8 @@ $("#fSalvar").onclick = async ()=>{
           corpo.data = $("#fPrimeiro").value || somaDias(corpo.data,30);
         }
         await rest("evento",{method:"POST",headers:{Prefer:"return=minimal"},body:JSON.stringify(corpo)});
+        if(form.forma==="maquininha" && form.tipo==="entrada" && corpo.data>hojeISO())
+          await somarAoReceber(corpo.frente, corpo.valor);
         toast("Lançado.");
       }else{
         /* Parcelamento: uma linha por mes, ligadas pelo mesmo grupo.
@@ -3021,6 +3142,10 @@ $("#fSalvar").onclick = async ()=>{
           }));
         }
         await rest("evento",{method:"POST",headers:{Prefer:"return=minimal"},body:JSON.stringify(linhas)});
+        if(maq && form.tipo==="entrada"){
+          const futuro = linhas.filter(l=>l.data>hojeISO()).reduce((a,l)=>a+ +l.valor,0);
+          await somarAoReceber(corpo.frente, futuro);
+        }
         /* somar_parcelas e divida de cartao. Entrada nunca entra ai, senao um
            recebimento parcelado viraria divida no cartao do casal. */
         if(form.tipo==="gasto" && form.forma==="cartao" && form.cartao){
@@ -3059,8 +3184,11 @@ $("#fExcluir").onclick = async ()=>{
       const n = ev.parcelas || irmaos.length || 1;
       const seg = irmaos.find(x=>(x.parcela_num||0)>1);
       const porMes = +((seg || primeiro).valor);
-      /* devolve ao caixa o que ja tinha entrado ou saido das parcelas vencidas */
+      /* devolve ao caixa o que ja tinha entrado ou saido das parcelas vencidas,
+         e tira de "ainda vai cair" o que estava reservado */
       for(const x of irmaos) await desfazerBaixa(x);
+      if(ev.tipo==="entrada" && ev.forma==="maquininha")
+        await somarAoReceber(ev.frente, -irmaos.reduce((a,x)=>a+ +x.valor,0));
       await rest("evento?grupo=eq."+ev.grupo,{method:"DELETE",headers:{Prefer:"return=minimal"}});
       if(ev.forma==="cartao" && ev.cartao){
         await api("/rest/v1/rpc/somar_parcelas",{method:"POST",body:JSON.stringify({
@@ -3070,6 +3198,8 @@ $("#fExcluir").onclick = async ()=>{
       fecharSheet("#sheet"); toast("Compra parcelada excluída por inteiro: "+n+" parcelas saíram das faturas.");
     }else{
       await desfazerBaixa(ev);
+      if(ev && ev.tipo==="entrada" && ev.forma==="maquininha")
+        await somarAoReceber(ev.frente, -(+ev.valor));
       await rest("evento?id=eq."+form.id,{method:"DELETE",headers:{Prefer:"return=minimal"}});
       fecharSheet("#sheet"); toast("Lançamento excluído.");
     }
@@ -3163,7 +3293,10 @@ $("#ctExcluir").onclick = async ()=>{
 };
 
 /* ---------------- saldo ---------------- */
-function abrirSaldo(id){
+async function abrirSaldo(id){
+  /* aplica o que ja venceu ANTES de ele digitar o saldo do banco: se conferir
+     primeiro e o app baixar depois, o mesmo dinheiro entra duas vezes */
+  try{ if(await conciliarCaixa()) pintar(); }catch(e){}
   const s = id ? dados.saldos.find(x=>x.id===id) : null;
   saldoEd={id:s?s.id:null, frente:s?s.frente:(lente==="tudo"?"casa":lente), tipo:s?s.tipo:"conta"};
   $("#sdTitulo").textContent = s ? "Atualizar saldo" : "Nova conta";

@@ -423,10 +423,13 @@ select.inp{appearance:none;background-image:linear-gradient(45deg,transparent 50
   <div class="panel">
     <div class="handle"></div>
     <h3 id="pgTitulo">Quanto você pagou</h3>
-    <p style="color:var(--ink2);font-size:14px;margin:0 0 12px">
-      Contas que variam, como luz, água e impostos, quase nunca vêm no valor previsto. Escreva aqui o valor real do mês e o sistema passa a usar ele.</p>
+    <p style="color:var(--ink2);font-size:14px;margin:0 0 12px" id="pgAjuda">
+      Contas que variam, como luz, água e impostos, quase nunca vêm no valor previsto. Escreva aqui o valor real e o sistema passa a usar ele.</p>
     <div class="lbl" style="margin-top:0">Valor pago</div>
     <input class="inp" id="pgValor" inputmode="decimal">
+    <div class="lbl">Saiu de qual conta</div>
+    <div id="pgContas" class="chips"></div>
+    <div id="pgDif" style="font-size:13px;color:var(--ink2);margin-top:10px"></div>
     <div id="pgMsg"></div>
     <div style="height:20px"></div>
     <button class="btn" id="pgSalvar">Salvar valor pago</button>
@@ -559,10 +562,10 @@ select.inp{appearance:none;background-image:linear-gradient(45deg,transparent 50
    A chave abaixo e publica de proposito: ela sozinha nao le nada.
    Quem decide o que cada pessoa enxerga e o proprio banco (RLS).
    ============================================================ */
-const VERSAO = "34";
+const VERSAO = "35";
 const SB  = "https://oihyhyyhessqnpkknhsi.supabase.co";
 const KEY = "sb_publishable_T7LERNVYS8mAK0tOlWfl5A_4-yCUjie";
-const LS_SESS = "nf.sessao", LS_FILA = "nf.fila", LS_CASAL = "nf.casal", LS_REJ = "nf.recusados", LS_FRENTE = "nf.frenteLanc";
+const LS_SESS = "nf.sessao", LS_FILA = "nf.fila", LS_CASAL = "nf.casal", LS_REJ = "nf.recusados", LS_FRENTE = "nf.frenteLanc", LS_CONTA_PG = "nf.contaPagamento";
 
 const FRENTES = [
   {id:"tudo", nome:"Tudo"}, {id:"casa", nome:"Casal"},
@@ -771,10 +774,10 @@ async function carregar(){
       rest("membro?select=user_id,nome,papel,casal_id"),
       rest("categoria?select=id,pai,filho,tipo,frentes,ativo,teto&ativo=is.true&order=pai.asc,filho.asc"),
       rest("conta_fixa?select=id,descricao,valor,dia,frente,cartao,periodicidade,mes_venc,varia&ativo=is.true&order=dia.asc"),
-      rest("parcela_futura?select=id,cartao,mes_ref,valor,frente,pago,pago_em&order=mes_ref.asc"),
+      rest("parcela_futura?select=id,cartao,mes_ref,valor,frente,pago,pago_em,valor_pago,pago_conta_id&order=mes_ref.asc"),
       rest("conta_saldo?select=id,nome,frente,tipo,valor,atualizado_em&order=valor.desc"),
       rest("evento?select=id,data,valor,tipo,frente,descricao,forma,cartao,categoria_id,origem,obs,criado_por,parcelas,parcela_num,grupo,criado_em&data=gte."+janelaInicio()+"&order=data.desc,criado_em.desc&limit=2000"),
-      rest("pagamento_conta?select=conta_fixa_id,mes_ref,valor&mes_ref=eq."+mes),
+      rest("pagamento_conta?select=conta_fixa_id,mes_ref,valor,pago_conta_id&mes_ref=eq."+mes),
       rest("cartao?select=id,nome,dia_venc,dia_fechamento,limite,frente&ativo=is.true&order=nome.asc"),
       rest("fatura_conferida?select=id,cartao,mes_ref,valor_real,valor_app")
     ]);
@@ -809,6 +812,39 @@ function cobraNesteMes(c, mes){
   return (+mes.slice(5,7)) === (+c.mes_venc||1);
 }
 function custoMensal(c){ return c.periodicidade==="anual" ? (+c.valor)/12 : +c.valor; }
+
+/* ---------------- pagar tira dinheiro da conta ----------------
+   Antes, marcar uma fatura como paga tirava ela de "falta pagar" e nao mexia
+   no caixa. O dinheiro ficava contado duas vezes: parado no saldo conferido e
+   fora da divida. Agora todo pagamento debita a conta de onde saiu. */
+function contasDeCaixa(){ return (dados.saldos||[]).filter(s=>s.tipo!=="a_receber"); }
+/* Regra do Henrique, 01/09/2026: casal e confeitaria saem do CDB do Inter,
+   consultorio sai da InfinitePay. A ultima escolha fica lembrada por grupo. */
+function chavePg(frente){ return LS_CONTA_PG+"."+(frente==="consultorio"?"pj":"pf"); }
+function contaPadrao(frente){
+  const cs=contasDeCaixa(); if(!cs.length) return null;
+  try{ const g=localStorage.getItem(chavePg(frente));
+       if(g){ const s=cs.find(x=>String(x.id)===g); if(s) return s; } }catch(e){}
+  const alvo = frente==="consultorio" ? "consultorio" : "casa";
+  const doGrupo = cs.filter(x=>x.frente===alvo).sort((a,b)=>+b.valor-+a.valor);
+  return doGrupo[0] || cs.slice().sort((a,b)=>+b.valor-+a.valor)[0];
+}
+function nomeCurto(s){ return s ? String(s.nome).split(" (")[0] : ""; }
+async function moverSaldo(contaId, delta){
+  const s=(dados.saldos||[]).find(x=>String(x.id)===String(contaId));
+  if(!s || !delta) return;
+  const novo = +((+s.valor) + delta).toFixed(2);
+  const agora = new Date().toISOString();
+  await rest("conta_saldo?id=eq."+s.id,{method:"PATCH",headers:{Prefer:"return=minimal"},
+    body:JSON.stringify({valor:novo, atualizado_em:agora})});
+  s.valor=novo; s.atualizado_em=agora;
+}
+/* A fatura inteira, sem a lente. Marcar como paga na lente do consultorio
+   nao pode debitar so a fatia do consultorio de um cartao do casal. */
+function faturaCheia(nomeCartao, mes){
+  const l=lente; lente="tudo";
+  try{ return fatura(nomeCartao, mes); } finally{ lente=l; }
+}
 
 /* A lente vale tambem dentro da fatura: na lente do consultorio, a fatura do
    cartao do casal mostra so a parte do consultorio. O "pago" continua vindo da
@@ -1900,10 +1936,18 @@ function abrirLista(qual){
     });
     const falta=itens.filter(i=>!i.pago).sort((a,b)=>a.dia-b.dia);
     const pagos=itens.filter(i=>i.pago).sort((a,b)=>a.dia-b.dia);
-    const somaFalta=falta.reduce((a,i)=>a+i.valor,0), somaPago=pagos.reduce((a,i)=>a+i.valor,0);
+    /* o "ja pago" soma o que saiu da conta, nao o que estava previsto */
+    const realDe=(i)=>{
+      const pg = i.k==="c" ? dados.pagos.find(x=>x.conta_fixa_id===i.id)
+                           : dados.parcelas.find(x=>x.cartao===i.cartao && x.mes_ref===i.mes);
+      const v = i.k==="c" ? (pg?pg.valor:null) : (pg?pg.valor_pago:null);
+      return v!=null ? +v : i.valor;
+    };
+    const somaFalta=falta.reduce((a,i)=>a+i.valor,0), somaPago=pagos.reduce((a,i)=>a+realDe(i),0);
     $("#slTitulo").textContent="Contas de "+nomeMes(mes);
     $("#slNota").innerHTML="Falta pagar <b style='color:var(--warn)'>"+brl(somaFalta)+"</b>. "
-      +"Já pago <b style='color:var(--good)'>"+brl(somaPago)+"</b>. Toque no quadradinho para marcar.";
+      +"Já pago <b style='color:var(--good)'>"+brl(somaPago)+"</b>. Toque no quadradinho para marcar; "
+      +"o valor sai do caixa na hora. Toque no valor de algo já pago para corrigir quanto foi e de qual conta.";
     add.textContent="+ conta fixa"; add.onclick=()=>{ fecharSheet("#sheetLista"); abrirConta(null); };
 
     const linha=(i)=>{
@@ -1911,9 +1955,13 @@ function abrirLista(qual){
       const perto = !i.pago && !atrasada && (i.dia - diaHoje) <= 3;
       const sinal = i.pago ? "" : (atrasada ? '<span style="color:var(--bad);font-weight:700">!</span> ' :
                                    perto ? '<span style="color:var(--warn);font-weight:700">!</span> ' : "");
-      const pg = i.k==="c" ? dados.pagos.find(x=>x.conta_fixa_id===i.id) : null;
-      const realDif = pg && pg.valor!=null && Math.abs(+pg.valor - i.valor) > 0.005;
-      const quando = i.pago ? (realDif ? "pago "+brl(pg.valor) : "pago") : (atrasada ? "venceu dia "+i.dia : "vence dia "+i.dia);
+      /* o valor que saiu da conta manda: conta fixa guarda em pagamento_conta,
+         fatura guarda em parcela_futura.valor_pago */
+      const pg = i.k==="c" ? dados.pagos.find(x=>x.conta_fixa_id===i.id)
+                           : dados.parcelas.find(x=>x.cartao===i.cartao && x.mes_ref===i.mes);
+      const vPago = i.k==="c" ? (pg ? pg.valor : null) : (pg ? pg.valor_pago : null);
+      const realDif = i.pago && vPago!=null && Math.abs(+vPago - i.valor) > 0.005;
+      const quando = i.pago ? (realDif ? "pago "+brl(vPago) : "pago") : (atrasada ? "venceu dia "+i.dia : "vence dia "+i.dia);
       const cor = i.pago ? "var(--good)" : (atrasada ? "var(--bad)" : perto ? "var(--warn)" : "var(--ink3)");
       const cls = i.pago ? "pago" : atrasada ? "atras" : perto ? "falta" : "falta";
       return '<div class="row" data-k="'+i.k+'" data-id="'+i.id+'" data-cartao="'+(i.cartao||"")+'">' 
@@ -1921,8 +1969,8 @@ function abrirLista(qual){
         + (i.k==="c" ? '<div class="mid tap" data-edit="'+i.id+'">' : '<div class="mid">')
         + '<div class="t">'+sinal+i.nome+'</div>'
         + '<div class="s" style="color:'+cor+'">'+quando+' · '+i.detalhe+'</div></div>'
-        + (i.pago&&i.k==="c" ? '<div class="amt tap" data-pago="'+i.id+'">' : '<div class="amt">')
-        + brl(realDif?pg.valor:i.valor)+'</div>'
+        + (i.pago ? '<div class="amt tap" data-pago="'+i.k+'|'+(i.cartao||i.id)+'">' : '<div class="amt">')
+        + brl(realDif?vPago:i.valor)+'</div>'
         + '<div class="chk '+(i.pago?"on":(atrasada?"venceu":perto?"alerta":""))+'"></div></div>';
     };
     $("#slConteudo").innerHTML =
@@ -1943,7 +1991,9 @@ function abrirLista(qual){
       const ed=row.querySelector("[data-edit]");
       if(ed) ed.onclick=()=>{ fecharSheet("#sheetLista"); abrirConta(+ed.dataset.edit); };
       const pgv=row.querySelector("[data-pago]");
-      if(pgv) pgv.onclick=(ev)=>{ ev.stopPropagation(); fecharSheet("#sheetLista"); abrirPago(+pgv.dataset.pago); };
+      if(pgv) pgv.onclick=(ev)=>{ ev.stopPropagation(); fecharSheet("#sheetLista");
+        const [tp,ref]=pgv.dataset.pago.split("|");
+        if(tp==="c") abrirPago(+ref); else abrirPagoFatura(ref, mes); };
     });
   }
 
@@ -2041,26 +2091,49 @@ function abrirLista(qual){
    parcela_futura. Sem linha nao havia onde guardar o "pago", e o valor ficava
    preso em "falta pagar" para sempre. Agora a linha e criada zerada na hora. */
 async function marcarFatura(nomeCartao, mes, el){
+  const cd=(dados.cartoes||[]).find(x=>x.nome===nomeCartao);
+  const frente = cd ? cd.frente : "casa";
   let p=dados.parcelas.find(x=>x.cartao===nomeCartao && x.mes_ref===mes);
+  const vaiPagar = p ? !p.pago : true;
   if(el) el.classList.toggle("on");
   try{
+    if(vaiPagar){
+      const conta = contaPadrao(frente);
+      const valor = +(faturaCheia(nomeCartao, mes).total).toFixed(2);
+      const quando = new Date().toISOString();
+      const campos = {pago:true, pago_em:quando, valor_pago:valor,
+                      pago_conta_id: conta ? conta.id : null};
+      if(p){
+        await rest("parcela_futura?id=eq."+p.id,{method:"PATCH",headers:{Prefer:"return=minimal"},
+          body:JSON.stringify(campos)});
+        Object.assign(p, campos);
+      }else{
+        const casal=await meuCasal();
+        const criada=await rest("parcela_futura",{method:"POST",headers:{Prefer:"return=representation"},
+          body:JSON.stringify(Object.assign({casal_id:casal, cartao:nomeCartao, mes_ref:mes,
+                                             valor:0, frente:frente}, campos))});
+        if(criada && criada[0]){ dados.parcelas.push(criada[0]); p=criada[0]; }
+      }
+      if(conta && valor>0) await moverSaldo(conta.id, -valor);
+      pintar();
+      toastAcao("Pago "+brl(valor)+(conta? ", saiu do "+nomeCurto(conta) : "")+".",
+                "outro valor ou conta", ()=>abrirPagoFatura(nomeCartao, mes));
+      return;
+    }
+    /* desmarcar devolve o dinheiro para a conta de onde saiu */
     if(p){
-      const novo=!p.pago;
-      const quando = novo ? new Date().toISOString() : null;
+      const devolve = p.valor_pago!=null ? +p.valor_pago : +(faturaCheia(nomeCartao,mes).total).toFixed(2);
+      const volta = p.pago_conta_id;
+      if(volta) await moverSaldo(volta, +devolve);
       await rest("parcela_futura?id=eq."+p.id,{method:"PATCH",headers:{Prefer:"return=minimal"},
-        body:JSON.stringify({pago:novo, pago_em:quando})});
-      p.pago=novo; p.pago_em=quando;
-    }else{
-      const cd=(dados.cartoes||[]).find(x=>x.nome===nomeCartao);
-      const casal=await meuCasal();
-      const criada=await rest("parcela_futura",{method:"POST",headers:{Prefer:"return=representation"},
-        body:JSON.stringify({casal_id:casal, cartao:nomeCartao, mes_ref:mes, valor:0,
-                             frente:(cd?cd.frente:"casa"), pago:true, pago_em:new Date().toISOString()})});
-      if(criada && criada[0]) dados.parcelas.push(criada[0]);
+        body:JSON.stringify({pago:false, pago_em:null, valor_pago:null, pago_conta_id:null})});
+      p.pago=false; p.pago_em=null; p.valor_pago=null; p.pago_conta_id=null;
+      if(volta && devolve>0) toast("Desmarquei e devolvi "+brl(devolve)+" ao caixa.");
     }
     pintar();
   }catch(e){ if(el) el.classList.toggle("on"); toast("Não consegui marcar: "+e.message,true); }
 }
+
 
 function gastoPorCategoria(mes){
   const fim=mesSeguinte(mes), map={};
@@ -2223,10 +2296,8 @@ function pintarCartoes(){
   $("#cdLista").querySelectorAll("[data-pagar]").forEach(el=>el.onclick=async(ev)=>{
     ev.stopPropagation();
     const nome=el.dataset.pagar;
-    await marcarFatura(nome, mes, null);
-    const q=dados.parcelas.find(x=>x.cartao===nome && x.mes_ref===mes);
+    await marcarFatura(nome, mes, null);   /* ela ja avisa quanto saiu e de onde */
     pintarCartoes();
-    toast(q&&q.pago ? "Fatura marcada como paga." : "Fatura voltou para em aberto.");
   });
 }
 $("#cdFechar").onclick=()=>fecharSheet("#sheetCartoes");
@@ -2258,7 +2329,9 @@ $("#btnBackup").onclick = async ()=>{
 let confCartao=null, confMes=null;
 function abrirConferencia(nome){
   const mes = cdMes || mesRef();
-  const f = fatura(nome, mes);
+  /* o extrato do banco traz a fatura inteira, entao a conferencia ignora a
+     lente: comparar a fatia do consultorio com o total cobrado daria erro */
+  const f = faturaCheia(nome, mes);
   const cf = (dados.conferidas||[]).find(x=>x.cartao===nome && x.mes_ref===mes);
   confCartao=nome; confMes=mes;
   $("#cfTitulo").textContent = nome+", "+nomeMes(mes);
@@ -2275,7 +2348,7 @@ function mostrarDifConf(){
   const el=$("#cfResultado"); if(!el||!confCartao) return;
   const v=parseNum($("#cfValor").value);
   if(!(v>0)){ el.innerHTML=""; return; }
-  const f=fatura(confCartao, confMes), dif=v-f.total;
+  const f=faturaCheia(confCartao, confMes), dif=v-f.total;
   if(Math.abs(dif)<0.02){
     el.innerHTML='<div class="msg ok" style="margin-top:12px">Bate certinho. Diferença de zero.</div>';
   }else{
@@ -2291,12 +2364,30 @@ $("#cfSalvar").onclick=async()=>{
   if(!(v>0)){ $("#cfMsg").innerHTML='<div class="msg err">Escreva o total da fatura.</div>'; return; }
   try{
     const casal=await meuCasal();
-    const f=fatura(confCartao, confMes);
+    const f=faturaCheia(confCartao, confMes);
     await rest("fatura_conferida",{method:"POST",
       headers:{Prefer:"resolution=merge-duplicates,return=minimal"},
       body:JSON.stringify({casal_id:casal, cartao:confCartao, mes_ref:confMes,
                            valor_real:+v.toFixed(2), valor_app:+f.total.toFixed(2)})});
-    fecharSheet("#sheetConf"); toast("Conferência salva."); await carregar(); pintarCartoes();
+    /* Se a fatura ja esta paga, o total cobrado pelo banco E o valor que saiu
+       da conta. Guardar so a conferencia e deixar o caixa errado seria pedir
+       para a pessoa fazer a mesma correcao duas vezes. */
+    const pf=dados.parcelas.find(x=>x.cartao===confCartao && x.mes_ref===confMes);
+    let acertou=0;
+    if(pf && pf.pago){
+      const antes = pf.valor_pago!=null ? +pf.valor_pago : +f.total;
+      acertou = +(v - antes).toFixed(2);
+      if(Math.abs(acertou) > 0.005){
+        if(pf.pago_conta_id) await moverSaldo(pf.pago_conta_id, -acertou);
+        await rest("parcela_futura?id=eq."+pf.id,{method:"PATCH",headers:{Prefer:"return=minimal"},
+          body:JSON.stringify({valor_pago:+v.toFixed(2)})});
+      }
+    }
+    fecharSheet("#sheetConf");
+    toast(acertou && Math.abs(acertou)>0.005
+      ? "Conferência salva e caixa ajustado em "+brl(-acertou)+"."
+      : "Conferência salva.");
+    await carregar(); pintarCartoes();
   }catch(e){ $("#cfMsg").innerHTML='<div class="msg err">'+e.message+'</div>'; }
 };
 
@@ -2328,18 +2419,26 @@ async function marcarConta(id,el){
   el.classList.toggle("on");
   try{
     if(jaPago){
+      const pg=dados.pagos.find(p=>p.conta_fixa_id===id);
+      const devolve = pg && pg.valor!=null ? +pg.valor : +conta.valor;
+      if(pg && pg.pago_conta_id) await moverSaldo(pg.pago_conta_id, +devolve);
       await rest("pagamento_conta?conta_fixa_id=eq."+id+"&mes_ref=eq."+mes,{method:"DELETE",headers:{Prefer:"return=minimal"}});
       dados.pagos=dados.pagos.filter(p=>p.conta_fixa_id!==id);
     }else{
       const casal=await meuCasal();
+      const caixa=contaPadrao(conta.frente);
+      const valor=+(+conta.valor).toFixed(2);
       await rest("pagamento_conta",{method:"POST",headers:{Prefer:"return=minimal"},
-        body:JSON.stringify({casal_id:casal,conta_fixa_id:id,mes_ref:mes,valor:conta.valor})});
-      dados.pagos.push({conta_fixa_id:id,mes_ref:mes,valor:conta.valor});
+        body:JSON.stringify({casal_id:casal,conta_fixa_id:id,mes_ref:mes,valor:valor,
+                             pago_conta_id: caixa?caixa.id:null})});
+      dados.pagos.push({conta_fixa_id:id,mes_ref:mes,valor:valor,pago_conta_id:caixa?caixa.id:null});
+      if(caixa && valor>0) await moverSaldo(caixa.id, -valor);
       if(conta.varia){
         toast("Marquei como paga. Confere o valor do mês.");
         setTimeout(()=>abrirPago(id),260);
       }else{
-        toastAcao("Pago "+brl(conta.valor)+".","paguei outro valor",()=>abrirPago(id));
+        toastAcao("Pago "+brl(valor)+(caixa? ", saiu do "+nomeCurto(caixa) : "")+".",
+                  "outro valor ou conta",()=>abrirPago(id));
       }
     }
     pintar();
@@ -2347,27 +2446,116 @@ async function marcarConta(id,el){
 }
 
 
-/* ---------------- valor realmente pago ---------------- */
+
+/* ---------------- valor realmente pago, e de qual conta ----------------
+   Serve para conta fixa e para fatura de cartao. O que a fatura projeta quase
+   nunca e o que o banco cobra: falta compra nao lancada, sobra assinatura que
+   nao veio. Quem manda e o valor que saiu da conta. */
 let pagoEd=null;
-function abrirPago(contaId){
-  const c=dados.contas.find(x=>x.id===contaId); if(!c) return;
-  const p=dados.pagos.find(x=>x.conta_fixa_id===contaId);
-  pagoEd=contaId;
-  $("#pgTitulo").textContent=c.descricao;
-  $("#pgValor").value = num(p && p.valor!=null ? p.valor : c.valor);
+function pintarContasPg(){
+  const box=$("#pgContas"); if(!box||!pagoEd) return;
+  box.innerHTML = contasDeCaixa().map(s=>
+    '<button class="chip'+(String(s.id)===String(pagoEd.contaId)?" on":"")+'" data-cx="'+s.id+'">'
+    + nomeCurto(s)+'</button>').join("")
+    || '<div class="s" style="color:var(--ink3)">Nenhuma conta de caixa cadastrada.</div>';
+  box.querySelectorAll("[data-cx]").forEach(b=>b.onclick=()=>{
+    pagoEd.contaId = +b.dataset.cx; pintarContasPg(); mostrarDifPg();
+  });
+}
+function mostrarDifPg(){
+  const el=$("#pgDif"); if(!el||!pagoEd) return;
+  const v=parseNum($("#pgValor").value), d=+(v-pagoEd.previsto).toFixed(2);
+  const conta=contasDeCaixa().find(s=>String(s.id)===String(pagoEd.contaId));
+  const sobra = conta ? +((+conta.valor) + pagoEd.jaDebitado - v).toFixed(2) : null;
+  el.innerHTML = (Math.abs(d)<0.005
+      ? "Igual ao previsto, "+brl(pagoEd.previsto)+"."
+      : "<b style='color:var(--warn)'>"+(d>0?"R$ "+Math.abs(d).toLocaleString("pt-BR",{minimumFractionDigits:2})+" a mais"
+                                            :"R$ "+Math.abs(d).toLocaleString("pt-BR",{minimumFractionDigits:2})+" a menos")
+        + "</b> que o previsto de "+brl(pagoEd.previsto)+".")
+    + (conta ? "<br>Depois de salvar, "+nomeCurto(conta)+" fica com <b>"+brl(sobra)+"</b>." : "");
+}
+function abrirFolhaPg(cfg){
+  pagoEd = cfg;
+  $("#pgTitulo").textContent = cfg.titulo;
+  $("#pgAjuda").textContent = cfg.ajuda;
+  $("#pgValor").value = num(cfg.valor);
   $("#pgMsg").innerHTML="";
+  pintarContasPg(); mostrarDifPg();
+  $("#pgValor").oninput = mostrarDifPg;
   abrirSheet("#sheetPago");
   setTimeout(()=>{ $("#pgValor").focus(); $("#pgValor").select(); },120);
 }
+function abrirPago(contaId){
+  const c=dados.contas.find(x=>x.id===contaId); if(!c) return;
+  const p=dados.pagos.find(x=>x.conta_fixa_id===contaId);
+  const jaDebitado = (p && p.pago_conta_id) ? (p.valor!=null ? +p.valor : +c.valor) : 0;
+  abrirFolhaPg({tipo:"conta", id:contaId,
+    titulo:c.descricao,
+    ajuda:"Contas que variam, como luz, água e impostos, quase nunca vêm no valor previsto. O valor daqui é o que sai da conta.",
+    valor: (p && p.valor!=null) ? +p.valor : +c.valor,
+    previsto: +c.valor,
+    jaDebitado: jaDebitado,
+    contaId: (p && p.pago_conta_id) || (contaPadrao(c.frente)||{}).id || null,
+    frente: c.frente});
+}
+function abrirPagoFatura(nomeCartao, mes){
+  const p=dados.parcelas.find(x=>x.cartao===nomeCartao && x.mes_ref===mes);
+  const cd=(dados.cartoes||[]).find(x=>x.nome===nomeCartao);
+  const prev=+(faturaCheia(nomeCartao,mes).total).toFixed(2);
+  const jaDebitado = (p && p.pago_conta_id) ? (p.valor_pago!=null ? +p.valor_pago : prev) : 0;
+  abrirFolhaPg({tipo:"fatura", cartao:nomeCartao, mes:mes, id:p?p.id:null,
+    titulo:"Fatura "+nomeCartao,
+    ajuda:"O valor que o app projeta vem das parcelas, assinaturas e compras lançadas. O banco cobra o que cobra. Escreva aqui o valor da fatura e o caixa acerta sozinho.",
+    valor: (p && p.valor_pago!=null) ? +p.valor_pago : prev,
+    previsto: prev,
+    jaDebitado: jaDebitado,
+    contaId: (p && p.pago_conta_id) || (contaPadrao(cd?cd.frente:"casa")||{}).id || null,
+    frente: cd?cd.frente:"casa"});
+}
 $("#pgCancelar").onclick=()=>fecharSheet("#sheetPago");
 $("#pgSalvar").onclick=async()=>{
-  const v=parseNum($("#pgValor").value), mes=mesRef();
+  if(!pagoEd) return;
+  const v=+parseNum($("#pgValor").value).toFixed(2), mes=mesRef();
   if(!(v>=0)){ $("#pgMsg").innerHTML='<div class="msg err">Valor inválido.</div>'; return; }
   try{
-    await rest("pagamento_conta?conta_fixa_id=eq."+pagoEd+"&mes_ref=eq."+mes,
-      {method:"PATCH",headers:{Prefer:"return=minimal"},body:JSON.stringify({valor:+v.toFixed(2)})});
-    const p=dados.pagos.find(x=>x.conta_fixa_id===pagoEd); if(p) p.valor=+v.toFixed(2);
-    fecharSheet("#sheetPago"); toast("Guardado: pagou "+brl(v)+"."); pintar();
+    /* devolve o que ja tinha sido debitado antes e debita o novo, mesmo que a
+       conta tenha mudado. Assim salvar duas vezes nao cobra duas vezes. */
+    if(pagoEd.tipo==="conta"){
+      const pg=dados.pagos.find(x=>x.conta_fixa_id===pagoEd.id);
+      if(!pg){ $("#pgMsg").innerHTML='<div class="msg err">Marque a conta como paga primeiro.</div>'; return; }
+      if(pg.pago_conta_id && pagoEd.jaDebitado) await moverSaldo(pg.pago_conta_id, +pagoEd.jaDebitado);
+      await rest("pagamento_conta?conta_fixa_id=eq."+pagoEd.id+"&mes_ref=eq."+mes,
+        {method:"PATCH",headers:{Prefer:"return=minimal"},
+         body:JSON.stringify({valor:v, pago_conta_id:pagoEd.contaId})});
+      if(pg){ pg.valor=v; pg.pago_conta_id=pagoEd.contaId; }
+    }else{
+      const p=dados.parcelas.find(x=>x.cartao===pagoEd.cartao && x.mes_ref===pagoEd.mes);
+      if(!p){ $("#pgMsg").innerHTML='<div class="msg err">Marque a fatura como paga primeiro.</div>'; return; }
+      if(p.pago_conta_id && pagoEd.jaDebitado) await moverSaldo(p.pago_conta_id, +pagoEd.jaDebitado);
+      await rest("parcela_futura?id=eq."+p.id,{method:"PATCH",headers:{Prefer:"return=minimal"},
+        body:JSON.stringify({valor_pago:v, pago_conta_id:pagoEd.contaId})});
+      p.valor_pago=v; p.pago_conta_id=pagoEd.contaId;
+    }
+    if(pagoEd.contaId && v>0) await moverSaldo(pagoEd.contaId, -v);
+    /* o que saiu da conta e o que o banco cobrou: grava a conferencia junto,
+       senao a tela de cartoes continuaria pedindo o mesmo numero */
+    if(pagoEd.tipo==="fatura" && v>0){
+      try{
+        const casal=await meuCasal();
+        await rest("fatura_conferida",{method:"POST",
+          headers:{Prefer:"resolution=merge-duplicates,return=minimal"},
+          body:JSON.stringify({casal_id:casal, cartao:pagoEd.cartao, mes_ref:pagoEd.mes,
+                               valor_real:v, valor_app:pagoEd.previsto})});
+        const cf=(dados.conferidas||[]).find(x=>x.cartao===pagoEd.cartao && x.mes_ref===pagoEd.mes);
+        if(cf){ cf.valor_real=v; cf.valor_app=pagoEd.previsto; }
+        else dados.conferidas.push({cartao:pagoEd.cartao, mes_ref:pagoEd.mes, valor_real:v, valor_app:pagoEd.previsto});
+      }catch(e){}
+    }
+    try{ if(pagoEd.contaId) localStorage.setItem(chavePg(pagoEd.frente), String(pagoEd.contaId)); }catch(e){}
+    const conta=contasDeCaixa().find(s=>String(s.id)===String(pagoEd.contaId));
+    fecharSheet("#sheetPago");
+    toast("Pago "+brl(v)+(conta? ", saiu do "+nomeCurto(conta):"")+".");
+    pagoEd=null; pintar();
   }catch(e){ $("#pgMsg").innerHTML='<div class="msg err">'+e.message+'</div>'; }
 };
 

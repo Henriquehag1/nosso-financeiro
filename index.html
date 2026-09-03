@@ -564,7 +564,7 @@ select.inp{appearance:none;background-image:linear-gradient(45deg,transparent 50
    A chave abaixo e publica de proposito: ela sozinha nao le nada.
    Quem decide o que cada pessoa enxerga e o proprio banco (RLS).
    ============================================================ */
-const VERSAO = "39";
+const VERSAO = "40";
 const SB  = "https://oihyhyyhessqnpkknhsi.supabase.co";
 const KEY = "sb_publishable_T7LERNVYS8mAK0tOlWfl5A_4-yCUjie";
 const LS_SESS = "nf.sessao", LS_FILA = "nf.fila", LS_CASAL = "nf.casal", LS_REJ = "nf.recusados", LS_FRENTE = "nf.frenteLanc", LS_CONTA_PG = "nf.contaPagamento";
@@ -1489,37 +1489,55 @@ function pintar(){
 }
 
 
-/* ---------------- barras de teto ---------------- */
+/* ---------------- barras de teto ----------------
+   A barra mede so o que ja aconteceu neste mes. O agendado e a parcela de
+   compra antiga aparecem em texto, do lado, porque nao sao decisao de agora.
+   Tocar abre a lista item por item, nao a caixa de mudar o teto: a pergunta
+   de quem toca e "no que eu gastei", nao "quanto quero gastar". */
 function pintarTetos(r){
   const mes=mesRef(), gasto=gastoPorCategoria(mes);
   const cats=dados.cat.filter(c=>c.tipo==="gasto" && +c.teto>0)
     .filter(c=>frentesPermitidas(c).length>0)
     .filter(c=> lente==="tudo" ? true : frentesPermitidas(c).includes(lente))
-    .map(c=>({c, g:gasto[c.id]||0, t:+c.teto}))
+    .map(c=>{ const x=gasto[c.id]||zeroCat();
+              return {c, g:x.gastei, ag:x.agendado, pa:x.parcela, t:+c.teto}; })
     .sort((a,b)=> (b.g/b.t) - (a.g/a.t));
   const somaT=cats.reduce((a,x)=>a+x.t,0), somaG=cats.reduce((a,x)=>a+x.g,0);
+  const somaAg=cats.reduce((a,x)=>a+x.ag,0), somaPa=cats.reduce((a,x)=>a+x.pa,0);
   const head=$("#tetoHead"), lista=$("#tetosBarras");
   if(!cats.length){ head.classList.add("hide"); lista.classList.add("hide"); return; }
   head.classList.remove("hide"); lista.classList.remove("hide");
   head.querySelector(".sec").textContent = "Quanto ainda dá para gastar em "+nomeMes(mes);
   const sobra=somaT-somaG;
+  const dia=new Date().getDate();
+  const ultimo=new Date(+mes.slice(0,4), +mes.slice(5,7), 0).getDate();
   lista.innerHTML =
     '<div class="row"><div class="mid"><div class="t" style="font-weight:600">Sobra dos tetos</div>'
     + '<div class="barra"><i style="width:'+Math.min(100,somaG/somaT*100).toFixed(0)+'%;background:'
-      + (somaG>somaT?"var(--bad)":somaG>somaT*0.8?"var(--warn)":"var(--good)")+'"></i></div></div>'
+      + (somaG>somaT?"var(--bad)":somaG>somaT*0.8?"var(--warn)":"var(--good)")+'"></i></div>'
+    + '<div class="s" style="color:var(--ink3)">gasto que já aconteceu, dia '+dia+' de '+ultimo
+      + (somaAg>0||somaPa>0 ? ' · fora da barra: '
+          + [somaAg>0? brl0(somaAg)+" agendado":"", somaPa>0? brl0(somaPa)+" de parcela antiga":""]
+            .filter(Boolean).join(" e ") : '')
+      + '</div></div>'
     + '<div class="r" style="font-size:15px;font-weight:700;color:'+(sobra<0?"var(--bad)":"var(--ink)")+'">'
       + brl(sobra)+'<small>de '+brl0(somaT)+'</small></div></div>'
     + cats.map(x=>{
         const resta=x.t-x.g, pct=Math.min(100, x.g/x.t*100);
         const cor = x.g>x.t ? "var(--bad)" : x.g>x.t*0.8 ? "var(--warn)" : "var(--good)";
+        const fora=[];
+        if(x.ag>0) fora.push(brl0(x.ag)+" agendado");
+        if(x.pa>0) fora.push(brl0(x.pa)+" de parcela antiga");
         return '<div class="row tetoRow tap" data-tt="'+x.c.id+'">'
           + '<div class="mid"><div class="t">'+nomeCat(x.c)+'</div>'
-          + '<div class="barra"><i style="width:'+pct.toFixed(0)+'%;background:'+cor+'"></i></div></div>'
+          + '<div class="barra"><i style="width:'+pct.toFixed(0)+'%;background:'+cor+'"></i></div>'
+          + (fora.length ? '<div class="s" style="color:var(--ink3)">fora da barra: '+fora.join(" e ")+'</div>' : '')
+          + '</div>'
           + '<div class="r" style="color:'+(resta<0?"var(--bad)":"var(--ink2)")+'">'
             + (resta<0? "passou "+brl0(-resta) : brl0(resta))
             + '<small>'+brl0(x.g)+' de '+brl0(x.t)+'</small></div></div>';
       }).join("");
-  lista.querySelectorAll("[data-tt]").forEach(el=>el.onclick=()=>abrirTeto(+el.dataset.tt));
+  lista.querySelectorAll("[data-tt]").forEach(el=>el.onclick=()=>abrirDetalheCategoria(+el.dataset.tt, mes));
 }
 $("#tetoAbrir").onclick=()=>abrirLista("tetos");
 

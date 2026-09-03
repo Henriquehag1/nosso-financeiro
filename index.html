@@ -564,7 +564,7 @@ select.inp{appearance:none;background-image:linear-gradient(45deg,transparent 50
    A chave abaixo e publica de proposito: ela sozinha nao le nada.
    Quem decide o que cada pessoa enxerga e o proprio banco (RLS).
    ============================================================ */
-const VERSAO = "37";
+const VERSAO = "38";
 const SB  = "https://oihyhyyhessqnpkknhsi.supabase.co";
 const KEY = "sb_publishable_T7LERNVYS8mAK0tOlWfl5A_4-yCUjie";
 const LS_SESS = "nf.sessao", LS_FILA = "nf.fila", LS_CASAL = "nf.casal", LS_REJ = "nf.recusados", LS_FRENTE = "nf.frenteLanc", LS_CONTA_PG = "nf.contaPagamento";
@@ -1166,10 +1166,47 @@ function fluxoDiario(r, mesesHorizonte){
            entraTotal: linha.filter(x=>x.valor>0).reduce((a,x)=>a+x.valor,0) };
 }
 
+/* ---------------- reserva das frentes sem caixa proprio ----------------
+   A confeitaria nao tem conta nenhuma e o consultorio tem menos do que precisa:
+   o dinheiro das duas dorme no CDB do casal. Ler o CDB inteiro na lente do
+   casal, como se fosse todo dele, e o que fazia o folego parecer maior do que e.
+   A reserva e sempre CALCULADA, nunca digitada, entao nunca desencontra do
+   extrato do banco: o saldo continua sendo um numero so, o do banco. */
+let calculandoReserva = false;
+let _resCache = null, _resChave = "";
+function reservasCaixa(){
+  if(calculandoReserva) return {};
+  const chave = (dados.saldos||[]).map(s=>s.id+":"+s.valor).join(",")
+              + "|" + mesRef() + "|" + (dados.parcelas||[]).length;
+  if(_resCache && _resChave===chave) return _resCache;
+  const guarda = lente, res = {};
+  calculandoReserva = true;
+  try{
+    ["consultorio","confeitaria"].forEach(f=>{
+      lente = f;
+      const r = resumo();
+      const precisa = r.compromissoDoMes(mesSeguinte(r.mes));
+      res[f] = Math.max(0, +(precisa - r.caixa).toFixed(2));
+    });
+  }catch(e){ }
+  finally{ lente = guarda; calculandoReserva = false; }
+  _resCache = res; _resChave = chave;
+  return res;
+}
+function reservaTotal(){
+  const r = reservasCaixa();
+  return +(((r.consultorio||0) + (r.confeitaria||0))).toFixed(2);
+}
+
 function resumo(){
   const mes=mesRef();
   const saldos=filtra(dados.saldos);
-  const caixa = saldos.filter(s=>s.tipo!=="a_receber").reduce((a,s)=>a+ +s.valor,0);
+  const caixaBruto = saldos.filter(s=>s.tipo!=="a_receber").reduce((a,s)=>a+ +s.valor,0);
+  /* Na lente do casal, o que esta reservado para as outras frentes sai da conta.
+     Nas lentes delas nada muda: elas continuam mostrando o caixa proprio, e quem
+     diz que estao cobertas e o texto do card, nao um numero inventado. */
+  const reservado = (lente==="casa" && !calculandoReserva) ? reservaTotal() : 0;
+  const caixa = Math.max(0, caixaBruto - reservado);
   const receber = saldos.filter(s=>s.tipo==="a_receber").reduce((a,s)=>a+ +s.valor,0);
   const contas=filtra(dados.contas);
   const custoFixo = contas.reduce((a,c)=>a+custoMensal(c),0);
@@ -1248,7 +1285,7 @@ function resumo(){
   })();
   const meses = folego.meses;
   const compromissoProx = compromissoDoMes(proxMes);
-  return {caixa,receber,custoFixo,divida,faturaMes,faturaAberta,faturaProx,proxMes,gastoMes,entradaMes,
+  return {caixa,caixaBruto,reservado,receber,custoFixo,divida,faturaMes,faturaAberta,faturaProx,proxMes,gastoMes,entradaMes,
           faltaBanco,faltaFaturas,faltaTotal,doBanco,noCartao,meses,folego,folegoComReceber,
           compromissoMedio,compromissoProx,pagosIds,compromissoDoMes,saldos,contas,parc,mes};
 }
@@ -1344,7 +1381,9 @@ function pintar(){
     <div class="card full abre" data-p="saldos">
       <div class="k">DINHEIRO EM CAIXA${lente==="tudo"?"":" \u00b7 "+nomeLente.toUpperCase()}</div>
       <div class="v ${r.caixa>0?"good":"bad"}">${brl(r.caixa)}</div>
-      <div class="n">${r.receber>0? "mais "+brl(r.receber)+" a receber" : "nada a receber registrado"}</div></div>
+      <div class="n">${(r.receber>0? "mais "+brl(r.receber)+" a receber" : "nada a receber registrado")
+        + (r.reservado>0 ? " \u00b7 j\u00e1 descontados "+brl(r.reservado)
+             +" reservados para consult\u00f3rio e confeitaria" : "")}</div></div>
 
     <div class="card full abre" data-p="contas">
       <div class="k">AINDA FALTA PAGAR EM ${nomeMes(mesAtual).toUpperCase()}</div>
@@ -1354,12 +1393,13 @@ function pintar(){
           + (proxConta ? " \u00b7 pr\u00f3xima: "+proxConta.descricao+", dia "+proxConta.dia : "")}</div></div>
 
     <div class="card full abre" data-p="folego"><div class="k">CAIXA AGUENTA</div>
-      <div class="v sm ${fx.semCaixa?"":fx.meses>=6?"good":fx.meses>=3?"warn":"bad"}">${
-        fx.semCaixa ? "\u2014"
+      <div class="v sm ${(fx.semCaixa||(lente!=="casa"&&lente!=="tudo"&&(reservasCaixa()[lente]||0)>0))?"":fx.meses>=6?"good":fx.meses>=3?"warn":"bad"}">${
+        (fx.semCaixa||(lente!=="casa"&&lente!=="tudo"&&(reservasCaixa()[lente]||0)>0)) ? "\u2014"
         : fx.acabou ? fx.meses.toFixed(1).replace(".",",")+" meses" : "mais de "+Math.floor(fx.meses)+" meses"}</div>
-      <div class="n">${ fx.semCaixa
-        ? "esta frente n\u00e3o tem conta pr\u00f3pria: o dinheiro dela fica nas contas do casal. "
-          + "O f\u00f4lego s\u00f3 faz sentido na lente <b>Tudo</b>."
+      <div class="n">${ fx.semCaixa || (lente!=="casa" && lente!=="tudo" && (reservasCaixa()[lente]||0)>0)
+        ? "esta frente \u00e9 coberta pelo caixa do casal. J\u00e1 est\u00e3o <b>"
+          + brl(reservasCaixa()[lente]||0)+"</b> separados para o que ela precisa no m\u00eas que vem, "
+          + "e esse valor sai da conta do casal, n\u00e3o some. O f\u00f4lego de verdade se l\u00ea em <b>Tudo</b>."
         :
         "com o caixa de hoje e o que j\u00e1 est\u00e1 datado para cair, <b>sem nenhuma venda nova</b>: "
         + (fx.acabou
@@ -1760,12 +1800,22 @@ function abrirLista(qual){
       .filter(e=>e.tipo==="entrada" && e.forma!=="cartao" && e.data>hj)
       .reduce((a,e)=>a+ +e.valor,0);
     const difRec = +(soma(aReceber) - futuros).toFixed(2);
+    const resFr = reservasCaixa();
+    const resTot = (resFr.consultorio||0)+(resFr.confeitaria||0);
     $("#slNota").innerHTML="Em caixa hoje <b>"+brl(soma(emCaixa))+"</b>"
       + (aReceber.length? ", mais <b>"+brl(soma(aReceber))+"</b> que ainda vai cair" : "")
       + ". Toque em qualquer linha para corrigir o valor."
       + "<br><br>O caixa se move sozinho: pagar uma conta ou fatura tira o valor da conta, "
       + "e um recebimento entra no dia em que cai, saindo de \"ainda vai cair\". "
       + "Compra no cartão não sai da conta na hora, sai quando a fatura é paga."
+      + (resTot>0 && lente==="tudo"
+          ? "<br><br><b>Nem todo esse dinheiro \u00e9 do casal.</b> A confeitaria n\u00e3o tem conta pr\u00f3pria e o "
+            + "consult\u00f3rio tem menos do que precisa, ent\u00e3o o dinheiro das duas dorme no CDB. "
+            + "Do total, <b>"+brl(resFr.consultorio||0)+"</b> cobrem o consult\u00f3rio e <b>"
+            + brl(resFr.confeitaria||0)+"</b> cobrem a confeitaria no m\u00eas que vem. "
+            + "Sobram <b>"+brl(soma(emCaixa)-resTot)+"</b> realmente livres para o casal. "
+            + "Esse reparte \u00e9 calculado, nunca digitado: o saldo continua sendo um n\u00famero s\u00f3, o do banco."
+          : "")
       + (Math.abs(difRec) > 0.02
           ? "<br><br><b style='color:var(--warn)'>Conferir:</b> o \"ainda vai cair\" registrado está "
             + brl(Math.abs(difRec)) + (difRec>0 ? " acima" : " abaixo")
@@ -1887,8 +1937,18 @@ function abrirLista(qual){
     const fx = fluxoDiario(r);
     const hoje = fx.hoje;
     $("#slTitulo").textContent="At\u00e9 quando o caixa aguenta";
-    if(fx.semCaixa){
-      $("#slNota").innerHTML="Esta frente n\u00e3o tem conta banc\u00e1ria pr\u00f3pria cadastrada: "
+    const coberta = lente!=="casa" && lente!=="tudo" && (reservasCaixa()[lente]||0)>0;
+    if(fx.semCaixa || coberta){
+      const rv = reservasCaixa()[lente]||0;
+      $("#slNota").innerHTML= coberta
+        ? "Esta frente n\u00e3o se paga sozinha com o que tem em conta, ent\u00e3o quem cobre \u00e9 o caixa do casal."
+          + "<br><br>O app separa <b>"+brl(rv)+"</b> para o que ela precisa no m\u00eas que vem, e desconta esse "
+          + "valor do dinheiro do casal. Ningu\u00e9m precisa transferir nada: o dinheiro continua no mesmo banco, "
+          + "o que muda \u00e9 de quem ele \u00e9."
+          + "<br><br>Por isso n\u00e3o existe \"quanto esta frente aguenta\": ela aguenta enquanto o casal aguentar. "
+          + "O n\u00famero que vale se l\u00ea na lente <b>Tudo</b>. Para saber se ela vai bem, o card certo \u00e9 o de "
+          + "<b>sa\u00fade do m\u00eas</b>, que compara o que entra com o que custa sem depender de saldo."
+        : "Esta frente n\u00e3o tem conta banc\u00e1ria pr\u00f3pria cadastrada: "
         + "o dinheiro dela entra e sai pelas contas do casal. Sem caixa pr\u00f3prio, "
         + "\"at\u00e9 quando aguenta\" n\u00e3o significa nada aqui."
         + "<br><br>Para ver o f\u00f4lego de verdade, troque a lente para <b>Tudo</b>. "
@@ -2459,7 +2519,19 @@ async function conferirSistema(){
   if(semValor.length) alerta(semValor.length+" fatura paga sem o valor real",
     "o app usou a projeção. Toque no valor na lista de contas para escrever o que o banco cobrou");
 
-  /* 8. aditividade das lentes */
+  /* 8. reserva das frentes cobertas */
+  const rr = reservasCaixa();
+  const rt = (rr.consultorio||0)+(rr.confeitaria||0);
+  if(rt>0){
+    const guardaL=lente; lente="tudo"; const tudoCaixa=resumo().caixa; lente=guardaL;
+    if(rt > tudoCaixa) alerta("A reserva das frentes n\u00e3o cabe no caixa",
+      "consult\u00f3rio e confeitaria precisam de "+brl(rt)+" no m\u00eas que vem e o caixa inteiro \u00e9 "
+      +brl(tudoCaixa)+". N\u00e3o sobra nada para o casal");
+    else ok("Reserva das frentes cabe no caixa",
+      brl(rt)+" separados para consult\u00f3rio e confeitaria, "+brl(tudoCaixa-rt)+" livres para o casal");
+  }
+
+  /* 9. aditividade das lentes */
   const guarda=lente; let soma=0;
   ["casa","consultorio","confeitaria"].forEach(f=>{ lente=f; soma+=resumo().faltaTotal; });
   lente="tudo"; const total=resumo().faltaTotal; lente=guarda;

@@ -564,7 +564,7 @@ select.inp{appearance:none;background-image:linear-gradient(45deg,transparent 50
    A chave abaixo e publica de proposito: ela sozinha nao le nada.
    Quem decide o que cada pessoa enxerga e o proprio banco (RLS).
    ============================================================ */
-const VERSAO = "38";
+const VERSAO = "39";
 const SB  = "https://oihyhyyhessqnpkknhsi.supabase.co";
 const KEY = "sb_publishable_T7LERNVYS8mAK0tOlWfl5A_4-yCUjie";
 const LS_SESS = "nf.sessao", LS_FILA = "nf.fila", LS_CASAL = "nf.casal", LS_REJ = "nf.recusados", LS_FRENTE = "nf.frenteLanc", LS_CONTA_PG = "nf.contaPagamento";
@@ -1222,6 +1222,16 @@ function resumo(){
      Ela ja abate a fatura; contar como receita inflava o "entrou este mes". */
   const estornos = evs.filter(e=>e.tipo==="entrada" && e.forma==="cartao").reduce((a,e)=>a+ +e.valor,0);
   const gastoMes = evs.filter(e=>e.tipo==="gasto").reduce((a,e)=>a+ +e.valor,0) - estornos;
+  /* o card do mes mostra o que ja aconteceu. Somar o que so cai no dia 17 faz
+     o gasto parecer estourado no dia 3, que foi exatamente a confusao relatada. */
+  const hojeQ = hojeISO();
+  const ehParcelaVelha = e => e.forma==="cartao" && (e.parcelas||1)>1 && (e.parcela_num||1)>1;
+  const gastoAteHoje = evs.filter(e=>e.tipo==="gasto" && !ehParcelaVelha(e) && e.data<=hojeQ)
+                          .reduce((a,e)=>a+ +e.valor,0) - estornos;
+  const gastoAgendado = evs.filter(e=>e.tipo==="gasto" && !ehParcelaVelha(e) && e.data>hojeQ)
+                           .reduce((a,e)=>a+ +e.valor,0);
+  const gastoParcelaVelha = evs.filter(e=>e.tipo==="gasto" && ehParcelaVelha(e))
+                               .reduce((a,e)=>a+ +e.valor,0);
   const entradaMes = evs.filter(e=>e.tipo==="entrada" && e.forma!=="cartao").reduce((a,e)=>a+ +e.valor,0);
   const pagosIds = new Set(dados.pagos.map(p=>p.conta_fixa_id));
   const doBanco = contas.filter(c=>!c.cartao && cobraNesteMes(c,mes));
@@ -1285,7 +1295,7 @@ function resumo(){
   })();
   const meses = folego.meses;
   const compromissoProx = compromissoDoMes(proxMes);
-  return {caixa,caixaBruto,reservado,receber,custoFixo,divida,faturaMes,faturaAberta,faturaProx,proxMes,gastoMes,entradaMes,
+  return {caixa,caixaBruto,reservado,receber,custoFixo,divida,faturaMes,faturaAberta,faturaProx,proxMes,gastoMes,gastoAteHoje,gastoAgendado,gastoParcelaVelha,entradaMes,
           faltaBanco,faltaFaturas,faltaTotal,doBanco,noCartao,meses,folego,folegoComReceber,
           compromissoMedio,compromissoProx,pagosIds,compromissoDoMes,saldos,contas,parc,mes};
 }
@@ -1381,9 +1391,15 @@ function pintar(){
     <div class="card full abre" data-p="saldos">
       <div class="k">DINHEIRO EM CAIXA${lente==="tudo"?"":" \u00b7 "+nomeLente.toUpperCase()}</div>
       <div class="v ${r.caixa>0?"good":"bad"}">${brl(r.caixa)}</div>
-      <div class="n">${(r.receber>0? "mais "+brl(r.receber)+" a receber" : "nada a receber registrado")
-        + (r.reservado>0 ? " \u00b7 j\u00e1 descontados "+brl(r.reservado)
-             +" reservados para consult\u00f3rio e confeitaria" : "")}</div></div>
+      <div class="n">${(function(){
+        const rv = (lente!=="casa" && lente!=="tudo") ? (reservasCaixa()[lente]||0) : 0;
+        if(rv>0) return "esta frente n\u00e3o tem caixa pr\u00f3prio que baste, ent\u00e3o o casal separa <b>"
+          + brl(rv)+"</b> para o que ela precisa em "+nomeMes(mesSeguinte(mesRef()))
+          + (r.caixaBruto>0 ? ", al\u00e9m dos "+brl(r.caixaBruto)+" que ela tem em conta" : "");
+        return (r.receber>0? "mais "+brl(r.receber)+" a receber" : "nada a receber registrado")
+          + (r.reservado>0 ? " \u00b7 j\u00e1 descontados "+brl(r.reservado)
+               +" reservados para consult\u00f3rio e confeitaria" : "");
+      })()}</div></div>
 
     <div class="card full abre" data-p="contas">
       <div class="k">AINDA FALTA PAGAR EM ${nomeMes(mesAtual).toUpperCase()}</div>
@@ -1440,8 +1456,10 @@ function pintar(){
     })()}
 
     <div class="card abre" data-p="tetos"><div class="k">SAIU ESTE M\u00caS</div>
-      <div class="v sm">${brl(r.gastoMes)}</div>
-      <div class="n">o que voc\u00eas lan\u00e7aram \u00b7 tetos por categoria</div></div>
+      <div class="v sm">${brl(r.gastoAteHoje)}</div>
+      <div class="n">${"o que j\u00e1 aconteceu, at\u00e9 hoje"
+        + (r.gastoAgendado>0 ? " \u00b7 mais "+brl0(r.gastoAgendado)+" com data ainda por vir" : "")
+        + (r.gastoParcelaVelha>0 ? " \u00b7 mais "+brl0(r.gastoParcelaVelha)+" de parcela antiga" : "")}</div></div>
 
     <div class="card"><div class="k">ENTROU ESTE M\u00caS</div>
       <div class="v sm good">${brl(r.entradaMes)}</div>
@@ -2212,30 +2230,51 @@ function abrirLista(qual){
 
   /* ---------- tetos do que varia ---------- */
   if(qual==="tetos"){
-    const gasto=gastoPorCategoria(mes);
+    const gasto=gastoPorCategoria(mes), hoje=hojeISO();
     const cats=dados.cat.filter(c=>c.tipo==="gasto")
       .filter(c=>frentesPermitidas(c).length>0)
       .filter(c=> lente==="tudo" ? true : frentesPermitidas(c).includes(lente))
-      .map(c=>({c, g:gasto[c.id]||0, t:+c.teto||0}))
-      .filter(x=> x.g>0 || x.t>0)
-      .sort((a,b)=> (b.t?1:0)-(a.t?1:0) || b.g-a.g);
-    const somaTeto=cats.reduce((a,x)=>a+x.t,0), somaGasto=cats.reduce((a,x)=>a+x.g,0);
+      .map(c=>({c, x:(gasto[c.id]||zeroCat()), t:+c.teto||0}))
+      .filter(y=> y.x.gastei>0 || y.x.agendado>0 || y.x.parcela>0 || y.t>0)
+      .sort((a,b)=> (b.t?1:0)-(a.t?1:0) || b.x.gastei-a.x.gastei);
+    const somaTeto=cats.reduce((a,y)=>a+y.t,0);
+    const somaGastei=cats.reduce((a,y)=>a+y.x.gastei,0);
+    const somaAgend=cats.reduce((a,y)=>a+y.x.agendado,0);
+    const somaParc=cats.reduce((a,y)=>a+y.x.parcela,0);
+    const dia=new Date().getDate();
+    const ultimo=new Date(+mes.slice(0,4), +mes.slice(5,7), 0).getDate();
+
     $("#slTitulo").textContent="Gasto do mês por categoria";
-    $("#slNota").innerHTML = somaTeto>0
-      ? "Gastaram <b>"+brl(somaGasto)+"</b> de <b>"+brl(somaTeto)+"</b> em tetos definidos. Toque para mudar um teto."
-      : "Aqui entra o que varia: mercado, comer fora, transporte, lazer. Toque numa categoria para definir quanto querem gastar, no máximo, por mês.";
-    $("#slConteudo").innerHTML = '<div class="list">' + (cats.length ? cats.map(x=>{
-      const pct = x.t>0 ? Math.min(100, x.g/x.t*100) : 0;
-      const cor = x.t===0 ? "var(--ink3)" : x.g>x.t ? "var(--bad)" : x.g>x.t*0.8 ? "var(--warn)" : "var(--good)";
-      return '<div class="row tap" data-teto="'+x.c.id+'">'
-        + '<div class="mid"><div class="t">'+nomeCat(x.c)+'</div>'
-        + (x.t>0 ? '<div class="bar"><i style="width:'+pct.toFixed(0)+'%;background:'+cor+'"></i></div>'
+    $("#slNota").innerHTML =
+      "A barra mede só o que <b>já aconteceu neste mês</b>: <b>"+brl(somaGastei)+"</b>"
+      + (somaTeto>0 ? " de "+brl(somaTeto)+" em tetos" : "")
+      + (mes===mesRef() ? ", e hoje é dia "+dia+" de "+ultimo+"." : ".")
+      + "<br><br>Fica de fora, de propósito: <b>"+brl(somaAgend)+"</b> com data ainda por vir neste mês, "
+      + "e <b>"+brl(somaParc)+"</b> de parcelas de compras de meses anteriores. "
+      + "Parcela velha não é decisão deste mês, é conta antiga chegando; somar as duas coisas "
+      + "faz o teto parecer estourado antes de você gastar."
+      + "<br><br><b>Toque numa categoria</b> para ver item por item o que entrou em cada um dos três grupos.";
+    $("#slAdd").textContent=""; $("#slAdd").onclick=null;
+
+    $("#slConteudo").innerHTML = '<div class="list">' + (cats.length ? cats.map(y=>{
+      const pct = y.t>0 ? Math.min(100, y.x.gastei/y.t*100) : 0;
+      const cor = y.t===0 ? "var(--ink3)" : y.x.gastei>y.t ? "var(--bad)"
+                : y.x.gastei>y.t*0.8 ? "var(--warn)" : "var(--good)";
+      const extra = [];
+      if(y.x.agendado>0) extra.push(brl0(y.x.agendado)+" agendado");
+      if(y.x.parcela>0)  extra.push(brl0(y.x.parcela)+" de parcela antiga");
+      return '<div class="row tap" data-cat="'+y.c.id+'">'
+        + '<div class="mid"><div class="t">'+nomeCat(y.c)+'</div>'
+        + (y.t>0 ? '<div class="bar"><i style="width:'+pct.toFixed(0)+'%;background:'+cor+'"></i></div>'
                  : '<div class="s">sem teto definido</div>')
+        + (extra.length ? '<div class="s" style="color:var(--ink3)">mais '+extra.join(" e ")+'</div>' : '')
         + '</div>'
-        + '<div class="amt" style="color:'+cor+'">'+brl(x.g)+(x.t>0? '<div class="s" style="text-align:right;font-weight:400">de '+brl0(x.t)+'</div>':'')+'</div></div>';
+        + '<div class="amt" style="color:'+cor+'">'+brl(y.x.gastei)
+        + (y.t>0? '<div class="s" style="text-align:right;font-weight:400">de '+brl0(y.t)+'</div>':'')
+        + '</div></div>';
     }).join("") : '<div class="empty">Nada lançado ainda neste mês.</div>') + '</div>';
-    $("#slConteudo").querySelectorAll("[data-teto]").forEach(el=>el.onclick=()=>{
-      fecharSheet("#sheetLista"); abrirTeto(+el.dataset.teto);
+    $("#slConteudo").querySelectorAll("[data-cat]").forEach(el=>el.onclick=()=>{
+      abrirDetalheCategoria(+el.dataset.cat, mes);
     });
   }
   abrirSheet("#sheetLista");
@@ -2289,12 +2328,27 @@ async function marcarFatura(nomeCartao, mes, el){
 }
 
 
+/* Tres numeros por categoria, nao um. Misturar os tres e o que fazia o teto
+   aparecer estourado no dia 3 do mes:
+     gastei   compra deste mes que ja aconteceu
+     agendado compra deste mes com data ainda por vir
+     parcela  parcela 2 ou mais de compra de mes anterior, caindo aqui
+   Parcela velha nao e decisao deste mes, e conta antiga chegando, e no dia 3
+   nao faz sentido somar o que so vai acontecer no dia 17. */
 function gastoPorCategoria(mes){
-  const fim=mesSeguinte(mes), map={};
+  const fim=mesSeguinte(mes), hoje=hojeISO(), map={};
   filtra(dados.eventos).filter(e=>e.tipo==="gasto" && e.data>=mes && e.data<fim)
-    .forEach(e=>{ map[e.categoria_id]=(map[e.categoria_id]||0)+ +e.valor; });
+    .forEach(e=>{
+      const o = map[e.categoria_id] ||
+        (map[e.categoria_id] = {gastei:0, agendado:0, parcela:0, itens:[]});
+      const velha = e.forma==="cartao" && (e.parcelas||1)>1 && (e.parcela_num||1)>1;
+      const k = velha ? "parcela" : (e.data>hoje ? "agendado" : "gastei");
+      o[k] += +e.valor;
+      o.itens.push({e:e, k:k});
+    });
   return map;
 }
+function zeroCat(){ return {gastei:0, agendado:0, parcela:0, itens:[]}; }
 
 let tetoEd=null;
 function abrirTeto(catId){
@@ -2455,6 +2509,66 @@ function pintarCartoes(){
   });
 }
 $("#cdFechar").onclick=()=>fecharSheet("#sheetCartoes");
+
+/* ---------------- o que entrou numa categoria, item por item ----------------
+   Nasceu de uma pergunta certa: "os extras dizem que passei 526 e ainda e dia 3".
+   Sem abrir a lista, nao da para saber se o numero e gasto de verdade, compra
+   agendada ou parcela de coisa comprada meses atras. */
+function abrirDetalheCategoria(catId, mes){
+  const c = dados.cat.find(x=>x.id===catId); if(!c) return;
+  const x = gastoPorCategoria(mes)[catId] || zeroCat();
+  const teto = +c.teto||0, hoje=hojeISO();
+  const dia=new Date().getDate();
+  const ultimo=new Date(+mes.slice(0,4), +mes.slice(5,7), 0).getDate();
+
+  $("#slTitulo").textContent = nomeCat(c);
+  $("#slNota").innerHTML =
+    "Em "+nomeMes(mes)+(mes===mesRef()? ", ate hoje, dia "+dia+" de "+ultimo : "")+", esta categoria tem "
+    + "<b>"+brl(x.gastei)+"</b> de gasto que ja aconteceu"
+    + (teto>0 ? " contra um teto de <b>"+brl(teto)+"</b>." : ", e ainda nao tem teto definido.")
+    + (x.agendado>0||x.parcela>0
+        ? "<br><br>Além disso: "
+          + (x.agendado>0 ? "<b>"+brl(x.agendado)+"</b> com data ainda por vir" : "")
+          + (x.agendado>0&&x.parcela>0 ? ", e " : "")
+          + (x.parcela>0 ? "<b>"+brl(x.parcela)+"</b> de parcelas de compras feitas antes deste mês" : "")
+          + ". Nada disso conta na barra."
+        : "");
+  $("#slAdd").textContent = teto>0 ? "mudar teto" : "definir teto";
+  $("#slAdd").onclick = ()=>{ fecharSheet("#sheetLista"); abrirTeto(catId); };
+
+  const linha=(it)=>{
+    const e=it.e;
+    const parc = (e.parcelas||1)>1 ? " · parcela "+(e.parcela_num||1)+" de "+e.parcelas : "";
+    const quando = e.data>hoje ? "cai em "+dataCurta(e.data) : rotuloDia(e.data);
+    return '<div class="row tap" data-ev="'+e.id+'"><div class="mid">'
+      + '<div class="t">'+(e.descricao||nomeCat(c))+'</div>'
+      + '<div class="s">'+quando+" · "+(e.forma||"")+parc+" · "+rotulo(e.frente)+'</div></div>'
+      + '<div class="amt">'+brl(e.valor)+'</div></div>';
+  };
+  const bloco=(titulo, chave, cor, nota)=>{
+    const itens=x.itens.filter(i=>i.k===chave).sort((a,b)=>a.e.data<b.e.data?-1:1);
+    if(!itens.length) return "";
+    const soma=itens.reduce((a,i)=>a+ +i.e.valor,0);
+    return '<div class="sechead" style="margin:14px 0 8px"><h2 class="sec"'+(cor?' style="color:'+cor+'"':'')+'>'
+      + titulo+'</h2><span class="add" style="color:var(--ink3)">'+brl(soma)+'</span></div>'
+      + (nota? '<div class="nota" style="margin:0 0 8px">'+nota+'</div>' : '')
+      + '<div class="list">'+itens.map(linha).join("")+'</div>';
+  };
+
+  $("#slConteudo").innerHTML =
+      bloco("Conta na barra", "gastei", null,
+            "Compras feitas neste mês que já aconteceram. É isto que o teto mede.")
+    + bloco("Ainda vai acontecer", "agendado", "var(--warn)",
+            "Tem data neste mês, mas ainda não chegou. Vai entrar na barra no dia.")
+    + bloco("Parcela de compra antiga", "parcela", "var(--ink3)",
+            "Compra feita em outro mês, chegando parcelada. Sai da conta agora, mas a decisão de gastar foi lá atrás.")
+    || '<div class="empty">Nada nesta categoria em '+nomeMes(mes)+'.</div>';
+
+  $("#slConteudo").querySelectorAll("[data-ev]").forEach(el=>el.onclick=()=>{
+    fecharSheet("#sheetLista"); abrirFolha(el.dataset.ev);
+  });
+  abrirSheet("#sheetLista");
+}
 
 /* ---------------- conferir o sistema ----------------
    As contas que so eu conseguia rodar por SQL. Sem isto, um erro silencioso,

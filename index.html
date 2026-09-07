@@ -304,6 +304,9 @@ select.inp{appearance:none;background-image:linear-gradient(45deg,transparent 50
     <div id="fFrenteBox">
       <div class="lbl">De qual frente</div>
       <div class="chips" id="fFrentes"></div>
+      <div class="destino" style="margin-top:8px;padding:8px 2px 0;color:var(--ink3);font-size:11px">
+        Escolha a frente antes da categoria. As categorias abaixo passam a ser só dessa frente.
+      </div>
     </div>
 
     <div class="lbl">Categoria</div>
@@ -571,7 +574,7 @@ select.inp{appearance:none;background-image:linear-gradient(45deg,transparent 50
    A chave abaixo e publica de proposito: ela sozinha nao le nada.
    Quem decide o que cada pessoa enxerga e o proprio banco (RLS).
    ============================================================ */
-const VERSAO = "43";
+const VERSAO = "44";
 const SB  = "https://oihyhyyhessqnpkknhsi.supabase.co";
 const KEY = "sb_publishable_T7LERNVYS8mAK0tOlWfl5A_4-yCUjie";
 const LS_SESS = "nf.sessao", LS_FILA = "nf.fila", LS_CASAL = "nf.casal", LS_REJ = "nf.recusados", LS_FRENTE = "nf.frenteLanc", LS_CONTA_PG = "nf.contaPagamento";
@@ -3002,8 +3005,20 @@ function frentesPermitidas(c){
 }
 /* Com a lente em Tudo, a lista vinha inteira, as tres frentes juntas, trinta
    chips. O filtro de frente corta para so o que interessa. */
+/* A frente do lancamento e obrigatoria. Antes existia o chip "Todas", que
+   mostrava as categorias das tres frentes de uma vez. Como havia categorias com
+   o MESMO nome em frentes diferentes (dois chips escritos "Mercado", um do
+   casal e outro da confeitaria), tocar no chip errado gravava a frente errada
+   sem nenhum aviso: categoria de uma frente so nem abre a linha para corrigir.
+   Foi assim que compras do casal foram parar na confeitaria. */
+function frenteDoLancamento(){
+  if(lente!=="tudo") return lente;
+  const pode = f => f!=="consultorio" || (eu && eu.papel==="dono");
+  if(form.frenteFiltro && pode(form.frenteFiltro)) return form.frenteFiltro;
+  return "casa";
+}
 function catsVisiveis(){
-  const alvo = (lente!=="tudo") ? lente : (form.frenteFiltro||null);
+  const alvo = frenteDoLancamento();
   return dados.cat.filter(c=>c.tipo===form.tipo)
     .filter(c=>frentesPermitidas(c).length>0)
     .filter(c=> !alvo ? true : frentesPermitidas(c).includes(alvo));
@@ -3015,11 +3030,12 @@ function pintarFrentes(){
   caixa.classList.remove("hide");
   const disp = FRENTES.filter(f=>f.id!=="tudo")
     .filter(f=> f.id!=="consultorio" || (eu && eu.papel==="dono"));
-  box.innerHTML = disp.map(f=>'<button class="chip'+(form.frenteFiltro===f.id?" on":"")+'" data-ff="'+f.id+'">'+f.nome+'</button>').join("")
-    + '<button class="chip'+(form.frenteFiltro?"":" on")+'" data-ff="">Todas</button>';
+  const atual = frenteDoLancamento();
+  form.frenteFiltro = atual;
+  box.innerHTML = disp.map(f=>'<button class="chip'+(atual===f.id?" on":"")+'" data-ff="'+f.id+'">'+f.nome+'</button>').join("");
   box.querySelectorAll("[data-ff]").forEach(b=>b.onclick=()=>{
-    form.frenteFiltro = b.dataset.ff || null;
-    try{ localStorage.setItem(LS_FRENTE, form.frenteFiltro||""); }catch(e){}
+    form.frenteFiltro = b.dataset.ff;
+    try{ localStorage.setItem(LS_FRENTE, form.frenteFiltro); }catch(e){}
     if(!catsVisiveis().some(c=>c.id===form.catId)){ form.catId=null; form.frente=null; }
     pintarFrentes(); pintarCats(); pintarDestino();
   });
@@ -3059,6 +3075,8 @@ function abrirFolha(evId){
   }else{
     editandoParcelado=false;
     let ff=null; try{ ff=localStorage.getItem(LS_FRENTE)||null; }catch(e){}
+    if(ff!=="casa"&&ff!=="consultorio"&&ff!=="confeitaria") ff=null;
+    if(ff==="consultorio" && !(eu&&eu.papel==="dono")) ff=null;
     form={id:null,tipo:"gasto",catId:null,frente:null,forma:"pix",cartao:null,parcelas:1,frenteFiltro:ff};
     $("#sheetTitulo").textContent="Novo lançamento";
     $("#fValor").value=""; $("#fDesc").value=""; $("#fData").value=hojeISO();
@@ -3107,8 +3125,9 @@ function pintarCats(){
 function escolherFrente(){
   const c=dados.cat.find(x=>x.id===form.catId); if(!c){ form.frente=null; return; }
   const fs=frentesPermitidas(c);
-  if(fs.length===1) form.frente=fs[0];
-  else if(lente!=="tudo"&&fs.includes(lente)) form.frente=lente;
+  const alvo=frenteDoLancamento();
+  if(fs.includes(alvo)) form.frente=alvo;      /* a frente escolhida manda */
+  else if(fs.length===1) form.frente=fs[0];
   else if(fs.includes("casa")) form.frente="casa";
   else form.frente=fs[0]||"casa";
 }

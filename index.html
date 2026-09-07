@@ -327,7 +327,7 @@ select.inp{appearance:none;background-image:linear-gradient(45deg,transparent 50
 
     <div id="fMaqBox" class="hide">
       <div class="two">
-        <div><div class="lbl" style="margin-top:0">Taxa da maquininha</div>
+        <div><div class="lbl" style="margin-top:0">Taxa da maquininha ou da InfinitePay</div>
           <input class="inp" id="fTaxa" inputmode="decimal" placeholder="0,00"></div>
         <div><div class="lbl" style="margin-top:0">Primeiro recebimento</div>
           <input class="inp" id="fPrimeiro" type="date"></div>
@@ -564,7 +564,7 @@ select.inp{appearance:none;background-image:linear-gradient(45deg,transparent 50
    A chave abaixo e publica de proposito: ela sozinha nao le nada.
    Quem decide o que cada pessoa enxerga e o proprio banco (RLS).
    ============================================================ */
-const VERSAO = "40";
+const VERSAO = "41";
 const SB  = "https://oihyhyyhessqnpkknhsi.supabase.co";
 const KEY = "sb_publishable_T7LERNVYS8mAK0tOlWfl5A_4-yCUjie";
 const LS_SESS = "nf.sessao", LS_FILA = "nf.fila", LS_CASAL = "nf.casal", LS_REJ = "nf.recusados", LS_FRENTE = "nf.frenteLanc", LS_CONTA_PG = "nf.contaPagamento";
@@ -576,7 +576,7 @@ const FRENTES = [
 const FORMAS = [
   {id:"pix",nome:"Pix"},{id:"cartao",nome:"Cartão"},{id:"debito",nome:"Débito"},
   {id:"dinheiro",nome:"Dinheiro"},{id:"boleto",nome:"Boleto"},{id:"transferencia",nome:"Transferência"},
-  {id:"maquininha",nome:"Maquininha"}
+  {id:"maquininha",nome:"Maquininha ou InfinitePay"}
 ];
 /* Soma dias no calendario, sem armadilha de fuso. */
 function somaDias(iso,k){
@@ -824,10 +824,16 @@ function custoMensal(c){ return c.periodicidade==="anual" ? (+c.valor)/12 : +c.v
 function contasDeCaixa(){ return (dados.saldos||[]).filter(s=>s.tipo!=="a_receber"); }
 /* Regra do Henrique, 01/09/2026: casal e confeitaria saem do CDB do Inter,
    consultorio sai da InfinitePay. A ultima escolha fica lembrada por grupo. */
-function chavePg(frente){ return LS_CONTA_PG+"."+(frente==="consultorio"?"pj":"pf"); }
-function contaPadrao(frente){
+/* De onde eu PAGO e onde eu RECEBO sao perguntas diferentes, e usar a mesma
+   memoria para as duas foi erro. Ele paga coisas do consultorio pelo Inter as
+   vezes; recebe sempre na InfinitePay. Com uma memoria so, o primeiro pagamento
+   feito pelo Inter passava a mandar todo Pix de paciente para o CDB do casal. */
+function chavePg(frente, uso){
+  return LS_CONTA_PG+"."+(uso==="receber"?"rec":"pag")+"."+(frente==="consultorio"?"pj":"pf");
+}
+function contaPadrao(frente, uso){
   const cs=contasDeCaixa(); if(!cs.length) return null;
-  try{ const g=localStorage.getItem(chavePg(frente));
+  try{ const g=localStorage.getItem(chavePg(frente, uso));
        if(g){ const s=cs.find(x=>String(x.id)===g); if(s) return s; } }catch(e){}
   const alvo = frente==="consultorio" ? "consultorio" : "casa";
   const doGrupo = cs.filter(x=>x.frente===alvo).sort((a,b)=>+b.valor-+a.valor);
@@ -876,9 +882,9 @@ async function conciliarCaixa(){
   let feitos=0, liquido=0;
   try{
     for(const e of pend){
-      const caixa = contaPadrao(e.frente);
-      if(!caixa) break;
       const ent = e.tipo==="entrada";
+      const caixa = contaPadrao(e.frente, ent ? "receber" : "pagar");
+      if(!caixa) break;
       const v = +(+e.valor).toFixed(2);
       /* recebivel da maquininha deixa de ser "a receber" e vira dinheiro */
       const rec = (ent && e.forma==="maquininha") ? contaReceber(e.frente) : null;
@@ -2309,7 +2315,7 @@ async function marcarFatura(nomeCartao, mes, el){
   if(el) el.classList.toggle("on");
   try{
     if(vaiPagar){
-      const conta = contaPadrao(frente);
+      const conta = contaPadrao(frente, "pagar");
       const valor = +(faturaCheia(nomeCartao, mes).total).toFixed(2);
       const quando = new Date().toISOString();
       const campos = {pago:true, pago_em:quando, valor_pago:valor,
@@ -2826,7 +2832,7 @@ async function marcarConta(id,el){
       dados.pagos=dados.pagos.filter(p=>p.conta_fixa_id!==id);
     }else{
       const casal=await meuCasal();
-      const caixa=contaPadrao(conta.frente);
+      const caixa=contaPadrao(conta.frente, "pagar");
       const valor=+(+conta.valor).toFixed(2);
       await rest("pagamento_conta",{method:"POST",headers:{Prefer:"return=minimal"},
         body:JSON.stringify({casal_id:casal,conta_fixa_id:id,mes_ref:mes,valor:valor,
@@ -2895,7 +2901,7 @@ function abrirPago(contaId){
     valor: (p && p.valor!=null) ? +p.valor : +c.valor,
     previsto: +c.valor,
     jaDebitado: jaDebitado,
-    contaId: (p && p.pago_conta_id) || (contaPadrao(c.frente)||{}).id || null,
+    contaId: (p && p.pago_conta_id) || (contaPadrao(c.frente,"pagar")||{}).id || null,
     frente: c.frente});
 }
 function abrirPagoFatura(nomeCartao, mes){
@@ -2909,7 +2915,7 @@ function abrirPagoFatura(nomeCartao, mes){
     valor: (p && p.valor_pago!=null) ? +p.valor_pago : prev,
     previsto: prev,
     jaDebitado: jaDebitado,
-    contaId: (p && p.pago_conta_id) || (contaPadrao(cd?cd.frente:"casa")||{}).id || null,
+    contaId: (p && p.pago_conta_id) || (contaPadrao(cd?cd.frente:"casa","pagar")||{}).id || null,
     frente: cd?cd.frente:"casa"});
 }
 $("#pgCancelar").onclick=()=>fecharSheet("#sheetPago");
@@ -2951,7 +2957,7 @@ $("#pgSalvar").onclick=async()=>{
         else dados.conferidas.push({cartao:pagoEd.cartao, mes_ref:pagoEd.mes, valor_real:v, valor_app:pagoEd.previsto});
       }catch(e){}
     }
-    try{ if(pagoEd.contaId) localStorage.setItem(chavePg(pagoEd.frente), String(pagoEd.contaId)); }catch(e){}
+    try{ if(pagoEd.contaId) localStorage.setItem(chavePg(pagoEd.frente,"pagar"), String(pagoEd.contaId)); }catch(e){}
     const conta=contasDeCaixa().find(s=>String(s.id)===String(pagoEd.contaId));
     fecharSheet("#sheetPago");
     toast("Pago "+brl(v)+(conta? ", saiu do "+nomeCurto(conta):"")+".");
@@ -3107,21 +3113,35 @@ function liquidoMaq(){
   const taxa =(form.forma==="maquininha") ? parseNum($("#fTaxa").value) : 0;
   return { bruto:bruto, taxa:taxa, liquido:+(bruto-taxa).toFixed(2) };
 }
+/* Esta forma cobre tudo que o cliente parcela e o consultorio recebe parcelado:
+   InfiniteTap, maquininha fisica, link de pagamento e Pix parcelado. Cada
+   parcela vira um recebimento datado, entra em "ainda vai cair" na hora da
+   venda e vira dinheiro no dia em que cada uma pinga. */
 function notaMaquininha(){
   const el=$("#fMaqNota"); if(!el) return;
   const v=liquidoMaq();
-  if(!(v.bruto>0)){ el.innerHTML='Digite o valor que a pessoa pagou. A taxa é opcional.'; return; }
+  const conta = contaPadrao(form.frente||"casa", "receber");
+  const ondeCai = conta ? nomeCurto(conta) : "sua conta";
+  if(!(v.bruto>0)){
+    el.innerHTML='Serve para InfiniteTap, maquininha, link de pagamento e Pix parcelado: '
+      + 'o cliente parcela e você recebe parcela por parcela.<br><br>'
+      + 'Digite o valor que a pessoa pagou. A taxa é opcional.';
+    return;
+  }
   const n=Math.max(1, form.parcelas||1);
   const p=+(v.liquido/n).toFixed(2);
   const ini=$("#fPrimeiro").value||somaDias($("#fData").value||hojeISO(),30);
   const datas=[]; for(let i=0;i<n;i++){ const d=somaDias(ini,30*i).split("-"); datas.push(d[2]+"/"+d[1]); }
   el.innerHTML = 'A pessoa pagou <b>'+brl(v.bruto)+'</b>'
-    + (v.taxa>0 ? ', a maquininha fica com <b>'+brl(v.taxa)+'</b>' : '')
-    + ', então cai na conta <b>'+brl(v.liquido)+'</b>'
+    + (v.taxa>0 ? ', a taxa fica com <b>'+brl(v.taxa)+'</b>' : '')
+    + ', então cai em <b>'+ondeCai+'</b> o líquido de <b>'+brl(v.liquido)+'</b>'
     + (n>1 ? ' em <b>'+n+' vezes de '+brl(p)+'</b>, nos dias <b>'+datas.join(', ')+'</b>.'
            : ' no dia <b>'+datas[0]+'</b>.')
-    + '<div style="color:var(--ink3);margin-top:6px">Registro o líquido, que é o que entra de verdade no caixa. '
-    + 'O bruto e a taxa ficam guardados no lançamento.</div>';
+    + '<div style="color:var(--ink3);margin-top:6px">'
+    + (n>1 ? 'As '+n+' parcelas entram agora em "ainda vai cair" e viram dinheiro no dia de cada uma. '
+           : 'Entra em "ainda vai cair" e vira dinheiro no dia. ')
+    + 'Registro o líquido, que é o que entra de verdade. O bruto e a taxa ficam guardados no lançamento. '
+    + 'Se a primeira parcela cair em outra data, é só mudar o campo ao lado.</div>';
 }
 
 const OPC_PARC=[1,2,3,4,5,6,10,12,18];

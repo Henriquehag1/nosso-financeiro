@@ -574,7 +574,7 @@ select.inp{appearance:none;background-image:linear-gradient(45deg,transparent 50
    A chave abaixo e publica de proposito: ela sozinha nao le nada.
    Quem decide o que cada pessoa enxerga e o proprio banco (RLS).
    ============================================================ */
-const VERSAO = "44";
+const VERSAO = "45";
 const SB  = "https://oihyhyyhessqnpkknhsi.supabase.co";
 const KEY = "sb_publishable_T7LERNVYS8mAK0tOlWfl5A_4-yCUjie";
 const LS_SESS = "nf.sessao", LS_FILA = "nf.fila", LS_CASAL = "nf.casal", LS_REJ = "nf.recusados", LS_FRENTE = "nf.frenteLanc", LS_CONTA_PG = "nf.contaPagamento";
@@ -848,16 +848,22 @@ function contasDeCaixa(){ return (dados.saldos||[]).filter(s=>s.tipo!=="a_recebe
    memoria para as duas foi erro. Ele paga coisas do consultorio pelo Inter as
    vezes; recebe sempre na InfinitePay. Com uma memoria so, o primeiro pagamento
    feito pelo Inter passava a mandar todo Pix de paciente para o CDB do casal. */
+/* Ate a v44 confeitaria e casal dividiam a mesma memoria e o mesmo grupo de
+   contas, porque a confeitaria nao tinha conta propria. Agora tem: o Nubank PJ
+   da Jessica. Sem separar, o repasse da Keeta ia cair no CDB do casal. */
 function chavePg(frente, uso){
-  return LS_CONTA_PG+"."+(uso==="receber"?"rec":"pag")+"."+(frente==="consultorio"?"pj":"pf");
+  return LS_CONTA_PG+"."+(uso==="receber"?"rec":"pag")+"."+(frente||"casa");
 }
 function contaPadrao(frente, uso){
   const cs=contasDeCaixa(); if(!cs.length) return null;
   try{ const g=localStorage.getItem(chavePg(frente, uso));
        if(g){ const s=cs.find(x=>String(x.id)===g); if(s) return s; } }catch(e){}
-  const alvo = frente==="consultorio" ? "consultorio" : "casa";
-  const doGrupo = cs.filter(x=>x.frente===alvo).sort((a,b)=>+b.valor-+a.valor);
-  return doGrupo[0] || cs.slice().sort((a,b)=>+b.valor-+a.valor)[0];
+  /* primeiro a conta da propria frente; so se ela nao tiver conta e que cai
+     para as do casal, que e de onde o dinheiro sai quando falta. */
+  const doGrupo = cs.filter(x=>x.frente===frente).sort((a,b)=>+b.valor-+a.valor);
+  if(doGrupo.length) return doGrupo[0];
+  const doCasal = cs.filter(x=>x.frente==="casa").sort((a,b)=>+b.valor-+a.valor);
+  return doCasal[0] || cs.slice().sort((a,b)=>+b.valor-+a.valor)[0];
 }
 function nomeCurto(s){ return s ? String(s.nome).split(" (")[0] : ""; }
 /* A soma acontece no banco, nao aqui. Ler o saldo, somar no aparelho e gravar

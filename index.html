@@ -392,6 +392,13 @@ select.inp{appearance:none;background-image:linear-gradient(45deg,transparent 50
       <div class="lbl">Em qual mês cobra</div>
       <select class="inp" id="ctMes"></select>
     </div>
+    <div class="two" style="margin-top:14px">
+      <div><div class="lbl" style="margin-top:0">Começa em</div><input class="inp" id="ctInicio" type="month"></div>
+      <div><div class="lbl" style="margin-top:0">Termina em</div><input class="inp" id="ctFim" type="month"></div>
+    </div>
+    <div class="destino" style="margin-top:12px">
+      Deixe em branco se a conta sempre existiu e não tem data para acabar. Use "começa em" quando o primeiro pagamento é só daqui a um ou dois meses, e "termina em" quando você já sabe o mês do último.
+    </div>
     <div class="destino" style="margin-top:12px">
       Se for no cartão, ela deixa de aparecer como conta a pagar e passa a somar dentro da fatura daquele cartão. Um lugar só, nunca dois.
     </div>
@@ -564,7 +571,7 @@ select.inp{appearance:none;background-image:linear-gradient(45deg,transparent 50
    A chave abaixo e publica de proposito: ela sozinha nao le nada.
    Quem decide o que cada pessoa enxerga e o proprio banco (RLS).
    ============================================================ */
-const VERSAO = "41";
+const VERSAO = "42";
 const SB  = "https://oihyhyyhessqnpkknhsi.supabase.co";
 const KEY = "sb_publishable_T7LERNVYS8mAK0tOlWfl5A_4-yCUjie";
 const LS_SESS = "nf.sessao", LS_FILA = "nf.fila", LS_CASAL = "nf.casal", LS_REJ = "nf.recusados", LS_FRENTE = "nf.frenteLanc", LS_CONTA_PG = "nf.contaPagamento";
@@ -775,7 +782,7 @@ async function carregar(){
     const [membro,cat,contas,parcelas,saldos,eventos,pagos,cartoes,conferidas] = await Promise.all([
       rest("membro?select=user_id,nome,papel,casal_id"),
       rest("categoria?select=id,pai,filho,tipo,frentes,ativo,teto&ativo=is.true&order=pai.asc,filho.asc"),
-      rest("conta_fixa?select=id,descricao,valor,dia,frente,cartao,periodicidade,mes_venc,varia&ativo=is.true&order=dia.asc"),
+      rest("conta_fixa?select=id,descricao,valor,dia,frente,cartao,periodicidade,mes_venc,varia,inicio,fim&ativo=is.true&order=dia.asc"),
       rest("parcela_futura?select=id,cartao,mes_ref,valor,frente,pago,pago_em,valor_pago,pago_conta_id&order=mes_ref.asc"),
       rest("conta_saldo?select=id,nome,frente,tipo,valor,atualizado_em&order=valor.desc"),
       rest("evento?select=id,data,valor,tipo,frente,descricao,forma,cartao,categoria_id,origem,obs,criado_por,parcelas,parcela_num,grupo,criado_em,baixado_em,baixa_conta_id,baixa_receber_id&data=gte."+janelaInicio()+"&order=data.desc,criado_em.desc&limit=2000"),
@@ -811,11 +818,21 @@ function filtra(arr){ return lente==="tudo" ? arr : arr.filter(x=>x.frente===len
 /* Fatura de um cartao num mes = parcelas projetadas + assinaturas fixas
    daquele cartao. Compras lancadas no app aparecem a parte, porque a data
    de fechamento decide se caem nesta fatura ou na proxima. */
+/* Uma conta fixa pode comecar e pode acabar. A diarista do atelie so passa a
+   ser paga em outubro, porque o combinado e fechar o mes e pagar depois. Sem
+   isso, setembro mostrava um custo que ninguem vai pagar em setembro. */
 function cobraNesteMes(c, mes){
+  if(!vigente(c, mes)) return false;
   if(c.periodicidade!=="anual") return true;
   return (+mes.slice(5,7)) === (+c.mes_venc||1);
 }
 function custoMensal(c){ return c.periodicidade==="anual" ? (+c.valor)/12 : +c.valor; }
+/* vigente = ja comecou e ainda nao acabou, sem olhar periodicidade */
+function vigente(c, mes){
+  if(c.inicio && mes < String(c.inicio).slice(0,7)+"-01") return false;
+  if(c.fim    && mes > String(c.fim).slice(0,7)+"-01")    return false;
+  return true;
+}
 
 /* ---------------- pagar tira dinheiro da conta ----------------
    Antes, marcar uma fatura como paga tirava ela de "falta pagar" e nao mexia
@@ -1215,7 +1232,8 @@ function resumo(){
   const caixa = Math.max(0, caixaBruto - reservado);
   const receber = saldos.filter(s=>s.tipo==="a_receber").reduce((a,s)=>a+ +s.valor,0);
   const contas=filtra(dados.contas);
-  const custoFixo = contas.reduce((a,c)=>a+custoMensal(c),0);
+  /* conta que ainda nao comecou, ou que ja acabou, nao entra no custo fixo do mes */
+  const custoFixo = contas.filter(c=>vigente(c,mes)).reduce((a,c)=>a+custoMensal(c),0);
   const parc=filtra(dados.parcelas);
   const divida = parc.filter(p=>!p.pago).reduce((a,p)=>a+ +p.valor,0);
   const faturaMes = parc.filter(p=>p.mes_ref===mes).reduce((a,p)=>a+ +p.valor,0);
@@ -3477,6 +3495,8 @@ function abrirConta(id){
   $("#ctDia").value = c?c.dia:"10"; $("#ctMsg").innerHTML="";
   $("#ctMes").innerHTML = MESES.map((m,i)=>'<option value="'+(i+1)+'">'+m+'</option>').join("");
   $("#ctMes").value = c && c.mes_venc ? c.mes_venc : String(new Date().getMonth()+1);
+  $("#ctInicio").value = c && c.inicio ? String(c.inicio).slice(0,7) : "";
+  $("#ctFim").value    = c && c.fim    ? String(c.fim).slice(0,7)    : "";
   $("#ctExcluir").classList.toggle("hide", !c);
   pintarCtFrentes(); pintarCtPago(); pintarCtPeriodo(); abrirSheet("#sheetConta");
 }
@@ -3502,9 +3522,12 @@ $("#ctSalvar").onclick = async ()=>{
   if(!desc){ $("#ctMsg").innerHTML='<div class="msg err">Dê um nome para a conta.</div>'; return; }
   if(!(valor>=0)){ $("#ctMsg").innerHTML='<div class="msg err">Valor inválido.</div>'; return; }
   if(!(dia>=1&&dia<=31)){ $("#ctMsg").innerHTML='<div class="msg err">O dia precisa ser de 1 a 31.</div>'; return; }
+  const ini=$("#ctInicio").value, fi=$("#ctFim").value;
+  if(ini && fi && fi < ini){ $("#ctMsg").innerHTML='<div class="msg err">O mês de término não pode vir antes do de início.</div>'; return; }
   const corpo={descricao:desc,valor:+valor.toFixed(2),dia,frente:contaEd.frente,
                cartao:contaEd.cartao||null, periodicidade:contaEd.periodicidade,
-               mes_venc: contaEd.periodicidade==="anual" ? +$("#ctMes").value : null};
+               mes_venc: contaEd.periodicidade==="anual" ? +$("#ctMes").value : null,
+               inicio: ini ? ini+"-01" : null, fim: fi ? fi+"-01" : null};
   try{
     if(contaEd.id) await rest("conta_fixa?id=eq."+contaEd.id,{method:"PATCH",headers:{Prefer:"return=minimal"},body:JSON.stringify(corpo)});
     else { corpo.casal_id=await meuCasal(); await rest("conta_fixa",{method:"POST",headers:{Prefer:"return=minimal"},body:JSON.stringify(corpo)}); }

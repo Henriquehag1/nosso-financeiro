@@ -574,7 +574,7 @@ select.inp{appearance:none;background-image:linear-gradient(45deg,transparent 50
    A chave abaixo e publica de proposito: ela sozinha nao le nada.
    Quem decide o que cada pessoa enxerga e o proprio banco (RLS).
    ============================================================ */
-const VERSAO = "45";
+const VERSAO = "46";
 const SB  = "https://oihyhyyhessqnpkknhsi.supabase.co";
 const KEY = "sb_publishable_T7LERNVYS8mAK0tOlWfl5A_4-yCUjie";
 const LS_SESS = "nf.sessao", LS_FILA = "nf.fila", LS_CASAL = "nf.casal", LS_REJ = "nf.recusados", LS_FRENTE = "nf.frenteLanc", LS_CONTA_PG = "nf.contaPagamento";
@@ -854,16 +854,21 @@ function contasDeCaixa(){ return (dados.saldos||[]).filter(s=>s.tipo!=="a_recebe
 function chavePg(frente, uso){
   return LS_CONTA_PG+"."+(uso==="receber"?"rec":"pag")+"."+(frente||"casa");
 }
-function contaPadrao(frente, uso){
+function contaPadrao(frente, uso, valor){
   const cs=contasDeCaixa(); if(!cs.length) return null;
   try{ const g=localStorage.getItem(chavePg(frente, uso));
        if(g){ const s=cs.find(x=>String(x.id)===g); if(s) return s; } }catch(e){}
   /* primeiro a conta da propria frente; so se ela nao tiver conta e que cai
      para as do casal, que e de onde o dinheiro sai quando falta. */
   const doGrupo = cs.filter(x=>x.frente===frente).sort((a,b)=>+b.valor-+a.valor);
-  if(doGrupo.length) return doGrupo[0];
+  /* a conta da frente so vale se ela cobre o pagamento; senao o app iria
+     deixar a Nubank da confeitaria negativa ao pagar o aluguel do atelie */
+  const cobre = x => (uso!=="pagar") || !(valor>0) || (+x.valor >= +valor);
+  if(doGrupo.length && cobre(doGrupo[0])) return doGrupo[0];
   const doCasal = cs.filter(x=>x.frente==="casa").sort((a,b)=>+b.valor-+a.valor);
-  return doCasal[0] || cs.slice().sort((a,b)=>+b.valor-+a.valor)[0];
+  if(doCasal.length && cobre(doCasal[0])) return doCasal[0];
+  const maior = cs.slice().sort((a,b)=>+b.valor-+a.valor)[0];
+  return doGrupo[0] || doCasal[0] || maior;
 }
 function nomeCurto(s){ return s ? String(s.nome).split(" (")[0] : ""; }
 /* A soma acontece no banco, nao aqui. Ler o saldo, somar no aparelho e gravar
@@ -909,7 +914,7 @@ async function conciliarCaixa(){
   try{
     for(const e of pend){
       const ent = e.tipo==="entrada";
-      const caixa = contaPadrao(e.frente, ent ? "receber" : "pagar");
+      const caixa = contaPadrao(e.frente, ent ? "receber" : "pagar", +e.valor);
       if(!caixa) break;
       const v = +(+e.valor).toFixed(2);
       /* recebivel da maquininha deixa de ser "a receber" e vira dinheiro */
@@ -1266,6 +1271,8 @@ function resumo(){
   const gastoParcelaVelha = evs.filter(e=>e.tipo==="gasto" && ehParcelaVelha(e))
                                .reduce((a,e)=>a+ +e.valor,0);
   const entradaMes = evs.filter(e=>e.tipo==="entrada" && e.forma!=="cartao").reduce((a,e)=>a+ +e.valor,0);
+  const entradaAteHoje = evs.filter(e=>e.tipo==="entrada" && e.forma!=="cartao" && e.data<=hojeQ).reduce((a,e)=>a+ +e.valor,0);
+  const entradaAgendada = entradaMes - entradaAteHoje;
   const pagosIds = new Set(dados.pagos.map(p=>p.conta_fixa_id));
   const doBanco = contas.filter(c=>!c.cartao && cobraNesteMes(c,mes));
   const noCartao = contas.filter(c=>c.cartao && cobraNesteMes(c,mes));
@@ -1328,7 +1335,7 @@ function resumo(){
   })();
   const meses = folego.meses;
   const compromissoProx = compromissoDoMes(proxMes);
-  return {caixa,caixaBruto,reservado,receber,custoFixo,divida,faturaMes,faturaAberta,faturaProx,proxMes,gastoMes,gastoAteHoje,gastoAgendado,gastoParcelaVelha,entradaMes,
+  return {caixa,caixaBruto,reservado,receber,custoFixo,divida,faturaMes,faturaAberta,faturaProx,proxMes,gastoMes,gastoAteHoje,gastoAgendado,gastoParcelaVelha,entradaMes,entradaAteHoje,entradaAgendada,
           faltaBanco,faltaFaturas,faltaTotal,doBanco,noCartao,meses,folego,folegoComReceber,
           compromissoMedio,compromissoProx,pagosIds,compromissoDoMes,saldos,contas,parc,mes};
 }
@@ -1495,8 +1502,9 @@ function pintar(){
         + (r.gastoParcelaVelha>0 ? " \u00b7 mais "+brl0(r.gastoParcelaVelha)+" de parcela antiga" : "")}</div></div>
 
     <div class="card"><div class="k">ENTROU ESTE M\u00caS</div>
-      <div class="v sm good">${brl(r.entradaMes)}</div>
-      <div class="n">o que voc\u00eas lan\u00e7aram</div></div>
+      <div class="v sm good">${brl(r.entradaAteHoje)}</div>
+      <div class="n">${"o que j\u00e1 caiu, at\u00e9 hoje"
+        + (r.entradaAgendada>0 ? " \u00b7 mais "+brl0(r.entradaAgendada)+" ainda vai cair este m\u00eas" : "")}</div></div>
 
     <div class="card full">
       <div class="k">SOBRA DEPOIS DE ${nomeMes(mesAtual).toUpperCase()} E ${nomeMes(r.proxMes).toUpperCase()}</div>
@@ -2354,8 +2362,8 @@ async function marcarFatura(nomeCartao, mes, el){
   if(el) el.classList.toggle("on");
   try{
     if(vaiPagar){
-      const conta = contaPadrao(frente, "pagar");
       const valor = +(faturaCheia(nomeCartao, mes).total).toFixed(2);
+      const conta = contaPadrao(frente, "pagar", valor);
       const quando = new Date().toISOString();
       const campos = {pago:true, pago_em:quando, valor_pago:valor,
                       pago_conta_id: conta ? conta.id : null};
@@ -2871,8 +2879,8 @@ async function marcarConta(id,el){
       dados.pagos=dados.pagos.filter(p=>p.conta_fixa_id!==id);
     }else{
       const casal=await meuCasal();
-      const caixa=contaPadrao(conta.frente, "pagar");
       const valor=+(+conta.valor).toFixed(2);
+      const caixa=contaPadrao(conta.frente, "pagar", valor);
       await rest("pagamento_conta",{method:"POST",headers:{Prefer:"return=minimal"},
         body:JSON.stringify({casal_id:casal,conta_fixa_id:id,mes_ref:mes,valor:valor,
                              pago_conta_id: caixa?caixa.id:null})});
@@ -2940,7 +2948,7 @@ function abrirPago(contaId){
     valor: (p && p.valor!=null) ? +p.valor : +c.valor,
     previsto: +c.valor,
     jaDebitado: jaDebitado,
-    contaId: (p && p.pago_conta_id) || (contaPadrao(c.frente,"pagar")||{}).id || null,
+    contaId: (p && p.pago_conta_id) || (contaPadrao(c.frente,"pagar",(p && p.valor!=null) ? +p.valor : +c.valor)||{}).id || null,
     frente: c.frente});
 }
 function abrirPagoFatura(nomeCartao, mes){
@@ -2954,7 +2962,7 @@ function abrirPagoFatura(nomeCartao, mes){
     valor: (p && p.valor_pago!=null) ? +p.valor_pago : prev,
     previsto: prev,
     jaDebitado: jaDebitado,
-    contaId: (p && p.pago_conta_id) || (contaPadrao(cd?cd.frente:"casa","pagar")||{}).id || null,
+    contaId: (p && p.pago_conta_id) || (contaPadrao(cd?cd.frente:"casa","pagar",prev)||{}).id || null,
     frente: cd?cd.frente:"casa"});
 }
 $("#pgCancelar").onclick=()=>fecharSheet("#sheetPago");

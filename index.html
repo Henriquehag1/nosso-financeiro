@@ -595,7 +595,7 @@ select.inp{appearance:none;background-image:linear-gradient(45deg,transparent 50
    A chave abaixo e publica de proposito: ela sozinha nao le nada.
    Quem decide o que cada pessoa enxerga e o proprio banco (RLS).
    ============================================================ */
-const VERSAO = "50";
+const VERSAO = "51";
 const SB  = "https://oihyhyyhessqnpkknhsi.supabase.co";
 const KEY = "sb_publishable_T7LERNVYS8mAK0tOlWfl5A_4-yCUjie";
 const LS_SESS = "nf.sessao", LS_FILA = "nf.fila", LS_CASAL = "nf.casal", LS_REJ = "nf.recusados", LS_FRENTE = "nf.frenteLanc", LS_CONTA_PG = "nf.contaPagamento";
@@ -815,7 +815,7 @@ async function carregar(){
       rest("fatura_conferida?select=id,cartao,mes_ref,valor_real,valor_app"),
       /* historico mensal importado do extrato, anterior ao app; se a tabela
          falhar, o app segue sem ele */
-      rest("receita_historico?select=frente,mes,tipo,canal,valor,bruto,vale&order=mes.asc").catch(()=>[])
+      rest("receita_historico?select=frente,mes,tipo,canal,valor,bruto,vale,fonte&order=mes.asc").catch(()=>[])
     ]);
     const meuId = sessao && sessao.user ? sessao.user.id : null;
     eu = (membro||[]).find(m=>m.user_id===meuId) || (membro && membro[0]) || {nome:"",papel:"parceiro"};
@@ -1160,9 +1160,15 @@ let saudeMes=null, entrouMes=null;
 /* ---------- entrou por canal: historico + lancamentos ----------
    Antes de agosto/26 o app nao tinha lancamento; o que existe e o resumo
    mensal tirado do extrato bancario (tabela receita_historico). A partir
-   de agosto vale o lancamento, que tem item por item. */
-const GRUPOS_ENTROU=[["99Food","#3987e5"],["Keeta","#d95926"],["iFood","#199e70"],
+   de agosto vale o lancamento, que tem item por item.
+   Confeitaria: por app. Consultorio: por forma de pagamento, com duas
+   leituras, o que foi VENDIDO (valor cheio no dia da venda, do portal da
+   InfinitePay) e o que CAIU NA CONTA (Pix na hora, cartao quando deposita). */
+var GRUPOS_ENTROU=[["99Food","#3987e5"],["Keeta","#d95926"],["iFood","#199e70"],
                      ["Pluxee","#c98500"],["Venda direta","#d55181"],["Outros","#008300"]];
+var GRUPOS_CONS_CAIXA=[["Pix","#3987e5"],["Cartão","#d95926"],["Outros","#008300"]];
+var GRUPOS_CONS_VENDA=[["Pix","#3987e5"],["Cartão à vista","#c98500"],["Cartão parcelado","#d95926"]];
+let painelModo="venda";
 function grupoDoCanal(nome){
   const n=String(nome||"").toLowerCase();
   if(n.startsWith("99food")) return "99Food";
@@ -1172,6 +1178,13 @@ function grupoDoCanal(nome){
   if(/encomenda|delivery|balc|maquininha/.test(n)) return "Venda direta";
   return "Outros";
 }
+function grupoCons(canalOuForma){
+  const n=String(canalOuForma||"").toLowerCase();
+  if(n.startsWith("pix")) return "Pix";
+  if(/cart|maquininha|dep/.test(n)) return "Cartão";
+  return "Outros";
+}
+function grupoDe(canal){ return lente==="consultorio" ? grupoCons(canal) : grupoDoCanal(canal); }
 function histCaixaDoMes(m){
   return (dados.historico||[]).filter(h=>h.tipo==="caixa" && h.mes===m && (lente==="tudo"||h.frente===lente));
 }
@@ -1182,40 +1195,79 @@ function mesesEntrou(){
 }
 /* soma por grupo do que ja caiu no mes (so o passado, nunca o agendado) */
 function entrouPorGrupo(m){
-  const o={}; GRUPOS_ENTROU.forEach(([g])=>o[g]=0);
+  const cons=lente==="consultorio";
+  const o={}; (cons?GRUPOS_CONS_CAIXA:GRUPOS_ENTROU).forEach(([g])=>o[g]=0);
   const hist=histCaixaDoMes(m);
-  if(m<MES_ZERO && hist.length){ hist.forEach(h=>{ o[grupoDoCanal(h.canal)]+= +h.valor; }); return o; }
+  if(m<MES_ZERO && hist.length){ hist.forEach(h=>{ o[grupoDe(h.canal)]+= +h.valor; }); return o; }
   const fim=mesSeguinte(m), hj=hojeISO();
   filtra(dados.eventos).filter(e=>contaComoEntrada(e) && e.data>=m && e.data<fim && e.data<=hj).forEach(e=>{
+    if(cons){ o[grupoCons(e.forma)] += +e.valor; return; }
     const c=dados.cat.find(x=>x.id===e.categoria_id);
     o[grupoDoCanal(c?c.pai:"")] += +e.valor;
   });
   return o;
 }
-/* KPIs e grafico da confeitaria, no topo da folha "Entrou" */
+/* vendido no mes pelo portal da InfinitePay (valor cheio, antes da taxa) */
+function vendasCons(){ return (dados.historico||[]).filter(h=>h.tipo==="venda" && h.frente==="consultorio"); }
+function vendidoPorGrupo(m){
+  const o={}; GRUPOS_CONS_VENDA.forEach(([g])=>o[g]=0);
+  vendasCons().filter(h=>h.mes===m).forEach(h=>{ if(o[h.canal]!==undefined) o[h.canal]+= +(h.bruto||0); });
+  return o;
+}
+function vendasAtualizadasEm(){
+  let d=""; vendasCons().forEach(h=>{ const x=String(h.fonte||"").match(/(\d{4}-\d{2}-\d{2})/); if(x && x[1]>d) d=x[1]; });
+  return d;
+}
+/* KPIs e grafico, no topo da folha "Entrou" (confeitaria e consultorio) */
 function painelEntrou(mSel){
-  if(lente!=="confeitaria") return "";
-  const meses=mesesEntrou(); if(meses.length<2) return "";
+  if(lente!=="confeitaria" && lente!=="consultorio") return "";
+  const cons=lente==="consultorio", venda=cons && painelModo==="venda";
+  const G = cons ? (venda?GRUPOS_CONS_VENDA:GRUPOS_CONS_CAIXA) : GRUPOS_ENTROU;
   const hojeM=mesRef();
-  const porMes=meses.map(m=>{ const g=entrouPorGrupo(m); const t=Object.values(g).reduce((a,v)=>a+v,0); return {m,g,t}; });
+  const meses = venda ? [...new Set(vendasCons().map(h=>h.mes).filter(m=>m<=hojeM))].sort() : mesesEntrou();
+  const toggle = cons ? '<div class="chips" id="painelModo" style="margin:0 0 12px">'
+      + '<button class="chip'+(venda?" on":"")+'" data-pm="venda">Vendido</button>'
+      + '<button class="chip'+(!venda?" on":"")+'" data-pm="caixa">Caiu na conta</button></div>' : '';
+  if(meses.length<2) return toggle;
+  const porMes=meses.map(m=>{ const g= venda ? vendidoPorGrupo(m) : entrouPorGrupo(m); const t=Object.values(g).reduce((a,v)=>a+v,0); return {m,g,t}; });
   const fechados=porMes.filter(x=>x.m<hojeM), ult3=fechados.slice(-3);
   const soma=(a,f)=>a.reduce((x,y)=>x+f(y),0);
   const media3= ult3.length ? soma(ult3,x=>x.t)/ult3.length : 0;
   const atual=porMes.find(x=>x.m===hojeM), ant=porMes.find(x=>x.m===mesAnterior(hojeM));
-  const tot3=soma(ult3,x=>x.t), apps3=soma(ult3,x=>x.g["99Food"]+x.g.Keeta+x.g.iFood);
-  const app=(dados.historico||[]).filter(h=>h.tipo==="app" && (lente==="tudo"||h.frente===lente) && ult3.some(u=>u.m===h.mes));
-  const bruto=soma(app,h=>+h.bruto||0), chega=soma(app,h=>(+h.valor||0)+(+h.vale||0));
+  const tot3=soma(ult3,x=>x.t);
   const k=(l,v,d)=>'<div class="kpi"><div class="l">'+l+'</div><div class="v">'+v+'</div>'+(d?'<div class="d">'+d+'</div>':'')+'</div>';
   const pctTxt=v=>Math.round(v)+"%";
+  const periodo = ult3.length? nomeMes(ult3[0].m)+" a "+nomeMes(ult3[ult3.length-1].m) : "";
   let dAt="";
   if(atual && ant && ant.t>0){ const r=atual.t/ant.t*100;
     dAt='<b style="color:'+(r>=100?'var(--good)':'var(--ink2)')+'">'+pctTxt(r)+'</b> de '+nomeMes(ant.m)+' inteiro'; }
-  let html='<div class="kpis">'
-    + k("Média por mês, últimos 3 meses", brl0(media3), ult3.length? nomeMes(ult3[0].m)+" a "+nomeMes(ult3[ult3.length-1].m) : "")
-    + k("Este mês, até hoje", brl0(atual?atual.t:0), dAt)
-    + k("Vem dos apps", tot3>0? pctTxt(apps3/tot3*100):"–", "99Food, Keeta e iFood, últimos 3 meses")
-    + k("Fica com os apps", bruto>0? pctTxt((1-chega/bruto)*100):"–", "do que é vendido neles: taxa, promoção e frete")
-    + '</div>';
+  let html=toggle+'<div class="kpis">';
+  if(!cons){
+    const apps3=soma(ult3,x=>x.g["99Food"]+x.g.Keeta+x.g.iFood);
+    const app=(dados.historico||[]).filter(h=>h.tipo==="app" && h.frente===lente && ult3.some(u=>u.m===h.mes));
+    const bruto=soma(app,h=>+h.bruto||0), chega=soma(app,h=>(+h.valor||0)+(+h.vale||0));
+    html+= k("Média por mês, últimos 3 meses", brl0(media3), periodo)
+      + k("Este mês, até hoje", brl0(atual?atual.t:0), dAt)
+      + k("Vem dos apps", tot3>0? pctTxt(apps3/tot3*100):"–", "99Food, Keeta e iFood, últimos 3 meses")
+      + k("Fica com os apps", bruto>0? pctTxt((1-chega/bruto)*100):"–", "do que é vendido neles: taxa, promoção e frete");
+  }else if(venda){
+    const par3=soma(ult3,x=>x.g["Cartão parcelado"]);
+    const cart=vendasCons().filter(h=>h.canal!=="Pix" && ult3.some(u=>u.m===h.mes));
+    const bC=soma(cart,h=>+h.bruto||0), lC=soma(cart,h=>+h.valor||0);
+    html+= k("Vendido por mês, últimos 3 meses", brl0(media3), periodo)
+      + k("Vendido este mês", brl0(atual?atual.t:0), dAt)
+      + k("Parcelado no cartão", tot3>0? pctTxt(par3/tot3*100):"–", "do vendido, últimos 3 meses")
+      + k("Taxa no cartão", bC>0? (Math.round((1-lC/bC)*1000)/10).toLocaleString("pt-BR")+"%":"–", "o que a InfinitePay desconta do cartão");
+  }else{
+    const pix3=soma(ult3,x=>x.g.Pix), hj=hojeISO();
+    const fut=filtra(dados.eventos).filter(e=>contaComoEntrada(e) && e.data>hj);
+    const ultF=fut.reduce((a,e)=>e.data>a?e.data:a,"");
+    html+= k("Caiu por mês, últimos 3 meses", brl0(media3), periodo)
+      + k("Este mês, até hoje", brl0(atual?atual.t:0), dAt)
+      + k("Veio por Pix", tot3>0? pctTxt(pix3/tot3*100):"–", "na hora, sem taxa, últimos 3 meses")
+      + k("Ainda vai cair", brl0(soma(fut,e=>+e.valor)), ultF? "das vendas já feitas, até "+nomeMes(ultF) : "nada agendado");
+  }
+  html+='</div>';
 
   /* colunas empilhadas, uma por mes */
   const W=340,H=178,L=34,R=4,T=16,B=20, ph=H-T-B, pw=W-L-R;
@@ -1233,7 +1285,7 @@ function painelEntrou(mSel){
   porMes.forEach((x,i)=>{
     const cx=L+band*i+band/2, x0=cx-bw/2;
     let base=y(0), segs='';
-    const ativos=GRUPOS_ENTROU.filter(([gname])=>x.g[gname]>0.5);
+    const ativos=G.filter(([gname])=>x.g[gname]>0.5);
     ativos.forEach(([gname,cor],j)=>{
       const h=(x.g[gname]/topo)*ph; if(h<0.5) return;
       const topoSeg=base-h, ultimo=j===ativos.length-1;
@@ -1250,30 +1302,36 @@ function painelEntrou(mSel){
     });
     const sel=x.m===mSel, parcial=x.m===hojeM;
     const dica=nomeMes(x.m)+(parcial?" (até hoje)":"")+": "+brl0(x.t)+"\n"
-      + GRUPOS_ENTROU.filter(([gn])=>x.g[gn]>0.5).map(([gn])=>gn+" "+brl0(x.g[gn])).join("\n");
+      + G.filter(([gn])=>x.g[gn]>0.5).map(([gn])=>gn+" "+brl0(x.g[gn])).join("\n");
     const rot=(sel||x===maior) ? '<text x="'+cx.toFixed(1)+'" y="'+(y(x.t)-4).toFixed(1)+'" text-anchor="middle" font-size="9" fill="var(--ink2)">'+kfmt(x.t)+'</text>' : '';
     g+='<g class="col" data-cm="'+x.m+'"><title>'+dica+'</title>'
       +'<rect class="hit" x="'+(L+band*i).toFixed(1)+'" y="'+T+'" width="'+band.toFixed(1)+'" height="'+(ph+B)+'" fill="transparent" rx="6"/>'
       +'<g opacity="'+(parcial?0.6:1)+'">'+segs+'</g>'+rot
       +'<text x="'+cx.toFixed(1)+'" y="'+(H-6)+'" text-anchor="middle" font-size="9.5" fill="'+(sel?'var(--ink)':'var(--ink3)')+'"'+(sel?' font-weight="700"':'')+'>'+nomeMes(x.m).slice(0,3)+'</text></g>';
   });
+  const atz=vendasAtualizadasEm();
+  const nota = !cons
+    ? 'Até julho, o valor vem do extrato do banco; de agosto em diante, dos lançamentos. O mês corrente aparece mais claro porque ainda não fechou.'
+    : venda
+      ? 'Vendido é o valor cheio de cada venda, no mês em que foi feita, antes da taxa. Uma venda parcelada entra inteira aqui, mesmo caindo na conta aos poucos. Vem do portal da InfinitePay'+(atz?', atualizado em '+dataCurta(atz):'')+'.'
+      : 'Caiu na conta é o que entrou de fato: Pix na hora, cartão quando a InfinitePay deposita. Até julho vem do extrato; de agosto em diante, dos lançamentos.';
   html+='<div class="colchart"><div class="legenda2">'
-    + GRUPOS_ENTROU.map(([gn,cor])=>'<span><i style="background:'+cor+'"></i>'+gn+'</span>').join("")
-    + '</div><svg viewBox="0 0 '+W+' '+H+'" role="img" aria-label="Entrou por mês, por canal">'+g+'</svg></div>'
-    + '<div class="nota" style="margin:0 2px 8px;font-size:11px;color:var(--ink3)">Toque numa coluna para abrir o mês. '
-    + 'Até julho, o valor vem do extrato do banco; de agosto em diante, dos lançamentos. O mês corrente aparece mais claro porque ainda não fechou.</div>';
+    + G.map(([gn,cor])=>'<span><i style="background:'+cor+'"></i>'+gn+'</span>').join("")
+    + '</div><svg viewBox="0 0 '+W+' '+H+'" role="img" aria-label="'+(venda?'Vendido':'Entrou')+' por mês">'+g+'</svg></div>'
+    + '<div class="nota" style="margin:0 2px 8px;font-size:11px;color:var(--ink3)">Toque numa coluna para abrir o mês. '+nota+'</div>';
 
   /* a mesma informacao em tabela */
   html+='<details class="tabhist"><summary>Ver em tabela</summary><div class="scroll"><table><tr><th>Mês</th>'
-    + GRUPOS_ENTROU.map(([gn])=>'<th>'+gn+'</th>').join("")+'<th>Total</th></tr>'
-    + porMes.map(x=>'<tr><td>'+nomeMes(x.m)+'</td>'+GRUPOS_ENTROU.map(([gn])=>'<td>'+(x.g[gn]>0.5?brl0(x.g[gn]).replace("R$ ",""):"–")+'</td>').join("")
+    + G.map(([gn])=>'<th>'+gn+'</th>').join("")+'<th>Total</th></tr>'
+    + porMes.map(x=>'<tr><td>'+nomeMes(x.m)+'</td>'+G.map(([gn])=>'<td>'+(x.g[gn]>0.5?brl0(x.g[gn]).replace("R$ ",""):"–")+'</td>').join("")
         +'<td>'+brl0(x.t).replace("R$ ","")+'</td></tr>').join("")
-    + '<tr class="tot"><td>Total</td>'+GRUPOS_ENTROU.map(([gn])=>'<td>'+brl0(soma(porMes,x=>x.g[gn])).replace("R$ ","")+'</td>').join("")
+    + '<tr class="tot"><td>Total</td>'+G.map(([gn])=>'<td>'+brl0(soma(porMes,x=>x.g[gn])).replace("R$ ","")+'</td>').join("")
     + '<td>'+brl0(soma(porMes,x=>x.t)).replace("R$ ","")+'</td></tr></table></div></details>';
   return html;
 }
 function ligarPainelEntrou(){
   $("#slConteudo").querySelectorAll("[data-cm]").forEach(el=>el.onclick=()=>{ entrouMes=el.dataset.cm; abrirLista("entrou"); });
+  $("#slConteudo").querySelectorAll("[data-pm]").forEach(el=>el.onclick=()=>{ painelModo=el.dataset.pm; abrirLista("entrou"); });
 }
 function mesesComDado(ate){
   const out=[]; let m=MES_ZERO;
@@ -2205,7 +2263,7 @@ function abrirLista(qual){
         + '<div class="sechead" style="margin:4px 0 8px"><h2 class="sec">De onde veio</h2>'
         + '<span class="add" style="color:var(--ink3)">'+brl(tot)+'</span></div><div class="list">'
         + ord.map(c=>'<div class="row"><div class="mid"><div class="t">'+(c==="Delivery proprio"?"Delivery próprio (Yooga)":c)+'</div>'
-            + '<div class="s">'+grupoDoCanal(c)+' · '+(tot>0?(porCanal[c]/tot*100).toFixed(0)+"%":"")+' do total</div></div>'
+            + '<div class="s">'+grupoDe(c)+' · '+(tot>0?(porCanal[c]/tot*100).toFixed(0)+"%":"")+' do total</div></div>'
             + '<div class="amt in">'+brl(porCanal[c])+'</div></div>').join("")
         + '</div>';
       const bx=$("#entrouMeses");

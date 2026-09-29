@@ -595,7 +595,7 @@ select.inp{appearance:none;background-image:linear-gradient(45deg,transparent 50
    A chave abaixo e publica de proposito: ela sozinha nao le nada.
    Quem decide o que cada pessoa enxerga e o proprio banco (RLS).
    ============================================================ */
-const VERSAO = "52";
+const VERSAO = "53";
 const SB  = "https://oihyhyyhessqnpkknhsi.supabase.co";
 const KEY = "sb_publishable_T7LERNVYS8mAK0tOlWfl5A_4-yCUjie";
 const LS_SESS = "nf.sessao", LS_FILA = "nf.fila", LS_CASAL = "nf.casal", LS_REJ = "nf.recusados", LS_FRENTE = "nf.frenteLanc", LS_CONTA_PG = "nf.contaPagamento";
@@ -657,6 +657,11 @@ function hojeISO(){ const d=new Date(); return d.getFullYear()+"-"+String(d.getM
 function nomeMes(iso){ const [a,m]=iso.split("-"); return ["jan","fev","mar","abr","mai","jun","jul","ago","set","out","nov","dez"][+m-1]+"/"+a.slice(2); }
 function rotulo(f){ return f==="casa"?"casal":f==="consultorio"?"consultório":"confeitaria"; }
 function nomeCat(c){ return c ? (c.filho ? c.pai+" · "+c.filho : c.pai) : "Sem categoria"; }
+/* categoria e frente juntas, sem repetir quando a categoria ja diz a frente ("Mercado · casal") */
+function catEFrente(c, frente){ const n=nomeCat(c), r=rotulo(frente);
+  return n.toLowerCase().endsWith(" · "+r) ? n : n+" · "+r; }
+/* nome curto de uma conta fixa: tira o que esta entre parenteses */
+function nomeCurtoConta(d){ return String(d||"").split(" (")[0]; }
 function toast(txt,erro){
   const t=document.createElement("div"); t.className="toast"+(erro?" err":""); t.textContent=txt;
   document.body.appendChild(t); setTimeout(()=>t.remove(),2800);
@@ -1125,6 +1130,7 @@ function saudeDoMes(m){
   const fim=mesSeguinte(m);
   const evs=filtra(dados.eventos).filter(e=>e.data>=m && e.data<fim);
   const entrou  = evs.filter(contaComoEntrada).reduce((a,e)=>a+ +e.valor,0);
+  const previsto= evs.filter(e=>contaComoEntrada(e) && e.data>hojeISO()).reduce((a,e)=>a+ +e.valor,0);
   /* entrada que nao veio da maquininha caiu na hora, entao ja e venda do mes */
   const naVista = evs.filter(e=>contaComoEntrada(e) && e.forma!=="maquininha")
                      .reduce((a,e)=>a+ +e.valor,0);
@@ -1138,7 +1144,7 @@ function saudeDoMes(m){
   const fixas    = itFixas.reduce((a,c)=>a+ +c.valor,0);
   const parcelas = filtra(dados.parcelas).filter(p=>p.mes_ref===m).reduce((a,p)=>a+ +p.valor,0);
   const custoMes = lancado + fixas;
-  return { m, entrou, naVista, lancado, fixas, parcelas, custoMes, itFixas, itGastos,
+  return { m, entrou, previsto, naVista, lancado, fixas, parcelas, custoMes, itFixas, itGastos,
            operacional: entrou - custoMes,
            resultado:   entrou - custoMes - parcelas,
            margem: entrou>0 ? (entrou-custoMes)/entrou*100 : null };
@@ -1173,7 +1179,7 @@ function saudeDoMesH(m){
     const hs=(dados.historico||[]).filter(h=>h.tipo==="caixa" && h.frente===lente && h.mes===m);
     const porCanal={}; hs.forEach(h=>porCanal[h.canal]=(porCanal[h.canal]||0)+ +h.valor);
     const entrou=hs.reduce((a,h)=>a+ +h.valor,0);
-    return { m, historico:true, entrou, porCanal, custoMes:0, operacional:null, margem:null, parcelas:0, itFixas:[], itGastos:[] };
+    return { m, historico:true, entrou, previsto:0, porCanal, custoMes:0, operacional:null, margem:null, parcelas:0, itFixas:[], itGastos:[] };
   }
   return saudeDoMes(m);
 }
@@ -1445,7 +1451,7 @@ function fluxoDiario(r, mesesHorizonte){
     saldo += x.valor;
     const reg = { data:x.data, valor:x.valor, nome:x.nome, det:x.det, tag:x.tag, saldo:saldo };
     linha.push(reg);
-    if(saldo < 0 && !quebra) quebra = { data:x.data, falta:-saldo, nome:x.nome };
+    if(saldo < 0 && !quebra) quebra = { data:x.data, falta:-saldo, nome:nomeCurtoConta(x.nome) };
     const k = x.data.slice(0,8)+"01";
     const o = porMes[k] || (porMes[k] = { m:k, entrou:0, saiu:0, fim:0, baixo:Infinity, baixoData:null });
     if(x.valor>0) o.entrou += x.valor; else o.saiu += -x.valor;
@@ -1786,7 +1792,7 @@ function pintar(){
             : " \u00b7 atravessa doze meses sem precisar de venda nova")
       }</div></div>
 
-    <div class="card abre" data-p="media"><div class="k">SAI POR M\u00caS, NA M\u00c9DIA</div>
+    <div class="card full abre" data-p="media"><div class="k">SAI POR M\u00caS, NA M\u00c9DIA</div>
       <div class="v sm">${brl(r.compromissoMedio)}</div>
       <div class="n">contas fixas mais parcelas, m\u00e9dia de 12 meses</div></div>
 
@@ -1798,7 +1804,7 @@ function pintar(){
     <div class="card full abre" data-p="fixos">
       <div class="k">CUSTO FIXO DO M\u00caS</div>
       <div class="v sm">${brl(r.custoFixo)}</div>
-      <div class="n">tudo que se repete: moradia, consult\u00f3rio, confeitaria e assinaturas</div></div>
+      <div class="n">${lente==="casa"?"tudo que se repete no casal: moradia, carro, seguros e assinaturas":lente==="consultorio"?"tudo que se repete no consult\u00f3rio: salas, contador, sistemas e assinaturas":lente==="confeitaria"?"tudo que se repete na confeitaria: ateli\u00ea, funcion\u00e1ria, contador e assinaturas":"tudo que se repete: moradia, consult\u00f3rio, confeitaria e assinaturas"}</div></div>
 
     ${(function(){
       saudeMes=null; entrouMes=null;       /* as folhas sempre abrem no mes corrente */
@@ -1808,7 +1814,7 @@ function pintar(){
       return `<div class="card full abre" data-p="saude">
         <div class="k">SA\u00daDE ${nome} EM ${nomeMes(mesAtual).toUpperCase()}</div>
         <div class="v ${cor}">${sd.operacional>=0?"+":"\u2212"}${brl(Math.abs(sd.operacional))}</div>
-        <div class="n">entrou ${brl(sd.entrou)}, custou ${brl(sd.custoMes)}${
+        <div class="n">entrou ${brl(sd.entrou)}${sd.previsto>0 ? " (sendo "+brl0(sd.previsto)+" ainda por cair)" : ""}, custou ${brl(sd.custoMes)}${
           sd.margem!==null ? " \u00b7 sobra "+sd.margem.toFixed(0)+"% do que entrou" : ""}${
           sd.parcelas>0 ? " \u00b7 mais "+brl(sd.parcelas)+" de parcela de cart\u00e3o" : ""}</div></div>`;
     })()}
@@ -2020,35 +2026,34 @@ function abrirCompromisso(m, ehAgora){
 function pintarGrafFluxo(){
   const head=$("#fluxoHead"), box=$("#grafFluxo"), leg=$("#fluxoLegenda");
   if(!box) return;
-  const evs=filtra(dados.eventos);
-  const porMes={};
-  evs.forEach(e=>{
-    if(e.data>hojeISO()) return;              /* nada de parcela futura aqui */
-    if(lente==="tudo" && ehTransfInterna(e)) return;   /* so troca de bolso entre as frentes */
-    const k=e.data.slice(0,7)+"-01";
-    porMes[k]=porMes[k]||{e:0,s:0};
-    if(e.tipo==="entrada") porMes[k].e+= +e.valor; else porMes[k].s+= +e.valor;
-  });
-  const meses=Object.keys(porMes).sort();
-  if(meses.length<1){ head.classList.add("hide"); box.classList.add("hide"); return; }
+  /* mesma conta do card e da folha de saude: entrou contra o que o mes custou
+     (contas fixas, assinaturas e gastos). Antes de agosto so existe a entrada. */
+  const meses=mesesSaude();
+  const hist=meses.map(saudeDoMesH).filter(h=>h.entrou>0 || h.custoMes>0);
+  if(hist.length<1){ head.classList.add("hide"); box.classList.add("hide"); return; }
   head.classList.remove("hide"); box.classList.remove("hide");
-  const maior=Math.max(1,...meses.map(k=>Math.max(porMes[k].e,porMes[k].s)));
+  const maior=Math.max(1,...hist.map(h=>Math.max(h.entrou,h.custoMes||0)));
   const mesAtual=mesRef();
-  box.innerHTML = meses.map(k=>{
-    const d=porMes[k], liq=d.e-d.s;
-    return '<div class="gr'+(k===mesAtual?' hoje':'')+'">'
-      + '<div class="mes">'+nomeMes(k)+'</div>'
+  box.innerHTML = hist.map(h=>{
+    return '<div class="gr tap'+(h.m===mesAtual?' hoje':'')+'" data-sm="'+h.m+'" style="cursor:pointer">'
+      + '<div class="mes">'+nomeMes(h.m)+'</div>'
       + '<div class="par">'
-        + '<div class="trilho"><i style="width:'+Math.max(1,d.e/maior*100).toFixed(1)+'%;background:var(--serieEntra)"></i></div>'
-        + '<div class="trilho"><i style="width:'+Math.max(1,d.s/maior*100).toFixed(1)+'%;background:var(--serieSai)"></i></div>'
+        + '<div class="trilho"><i style="width:'+Math.max(1,h.entrou/maior*100).toFixed(1)+'%;background:var(--serieEntra)"></i></div>'
+        + '<div class="trilho">'+(h.historico?'':'<i style="width:'+Math.max(1,h.custoMes/maior*100).toFixed(1)+'%;background:var(--serieSai)"></i>')+'</div>'
       + '</div>'
-      + '<div class="val" style="color:'+(liq>=0?"var(--good)":"var(--bad)")+'">'
-        + (liq>=0?"+":"\u2212")+brl0(Math.abs(liq))+'</div></div>';
+      + (h.historico
+          ? '<div class="val" style="color:var(--ink3)">'+brl0(h.entrou)+'</div>'
+          : '<div class="val" style="color:'+(h.operacional>=0?"var(--good)":"var(--bad)")+'">'
+            + (h.operacional>=0?"+":"\u2212")+brl0(Math.abs(h.operacional))+'</div>')
+      + '</div>';
   }).join("")
-  + '<div class="nota">A barra de cima é o que entrou, a de baixo é o que saiu, dos lançamentos de vocês. '
-  + 'O número da direita é a sobra do mês. Contas fixas pagas fora do app não entram aqui.</div>';
+  + '<div class="nota">A barra de cima é o que entrou, a de baixo é o que o mês custou: contas fixas, assinaturas e gastos. '
+  + 'O número da direita é a sobra, a mesma do card de saúde. '
+  + (hist.some(h=>h.historico) ? 'Antes de agosto só a entrada existe, tirada do extrato. ' : '')
+  + 'Toque num mês para abrir o detalhe.</div>';
+  box.querySelectorAll("[data-sm]").forEach(el=>el.onclick=()=>{ saudeMes=el.dataset.sm; abrirLista("saude"); });
   if(leg) leg.innerHTML = '<span class="legenda2"><span><i style="background:var(--serieEntra)"></i>entrou</span>'
-                        + '<span><i style="background:var(--serieSai)"></i>saiu</span></span>';
+                        + '<span><i style="background:var(--serieSai)"></i>custou</span></span>';
 }
 
 /* ---------------- extrato ---------------- */
@@ -2166,7 +2171,7 @@ function pintarExtrato(){
     html += '<div class="row tap" data-ev="'+e.id+'">'
       + '<div class="ic">'+(e.tipo==="entrada"?"↓":"↑")+'</div>'
       + '<div class="mid"><div class="t">'+(e.descricao||nomeCat(c))+'</div>'
-      + '<div class="s">'+dataCurta+atrasado+' · '+nomeCat(c)+' · '+rotulo(e.frente)
+      + '<div class="s">'+dataCurta+atrasado+' · '+catEFrente(c,e.frente)
       + (e.cartao?" · "+e.cartao:"")
       + ((e.parcelas||1)>1?" · "+e.parcela_num+"/"+e.parcelas:"")
       + (quem?" · "+quem:"")
@@ -2409,7 +2414,7 @@ function abrirLista(qual){
 
       html += '<div class="sechead" style="margin:4px 0 8px"><h2 class="sec">'
         + (mes===mesRef()?"Este mês":nomeMes(mes))+', por dentro</h2></div><div class="list">'
-        + linha("Entrou","recebimentos e vendas lançados · toque para abrir por origem",sd.entrou,"var(--good)",'data-go="entrou"')
+        + linha("Entrou",(sd.previsto>0 ? brl(sd.entrou-sd.previsto)+" já caiu · "+brl(sd.previsto)+" ainda vai cair até o fim do mês" : "recebimentos e vendas lançados")+" · toque para abrir por origem",sd.entrou,"var(--good)",'data-go="entrou"')
         + linha("Contas fixas e assinaturas",sd.itFixas.length+" itens · toque para ver",-sd.fixas,"var(--bad)",'data-ir="sdFixas"')
         + linha("Gastos lançados",sd.itGastos.length+" lançamentos · toque para ver",-sd.lancado,"var(--bad)",'data-ir="sdGastos"')
         + linha("Sobra do mês","entrou menos o que o mês custou",sd.operacional, sd.operacional>=0?"var(--good)":"var(--bad)")

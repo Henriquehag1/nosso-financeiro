@@ -508,6 +508,9 @@ select.inp{appearance:none;background-image:linear-gradient(45deg,transparent 50
       <div><div class="lbl" style="margin-top:0">Fecha no dia</div><input class="inp" id="fcFech" inputmode="numeric"></div>
       <div><div class="lbl" style="margin-top:0">Vence no dia</div><input class="inp" id="fcVenc" inputmode="numeric"></div>
     </div>
+    <div class="lbl">Débito automático</div>
+    <select class="inp" id="fcDebito"></select>
+    <p style="color:var(--ink3);font-size:12px;margin:6px 0 0">Se a fatura cai sozinha no banco, escolha a conta de onde o dinheiro sai de fato. No dia do vencimento o app marca como paga e tira desse saldo.</p>
     <div id="fcMsg"></div>
     <div style="height:20px"></div>
     <button class="btn" id="fcSalvar">Salvar</button>
@@ -574,7 +577,7 @@ select.inp{appearance:none;background-image:linear-gradient(45deg,transparent 50
    A chave abaixo e publica de proposito: ela sozinha nao le nada.
    Quem decide o que cada pessoa enxerga e o proprio banco (RLS).
    ============================================================ */
-const VERSAO = "46";
+const VERSAO = "47";
 const SB  = "https://oihyhyyhessqnpkknhsi.supabase.co";
 const KEY = "sb_publishable_T7LERNVYS8mAK0tOlWfl5A_4-yCUjie";
 const LS_SESS = "nf.sessao", LS_FILA = "nf.fila", LS_CASAL = "nf.casal", LS_REJ = "nf.recusados", LS_FRENTE = "nf.frenteLanc", LS_CONTA_PG = "nf.contaPagamento";
@@ -786,11 +789,11 @@ async function carregar(){
       rest("membro?select=user_id,nome,papel,casal_id"),
       rest("categoria?select=id,pai,filho,tipo,frentes,ativo,teto&ativo=is.true&order=pai.asc,filho.asc"),
       rest("conta_fixa?select=id,descricao,valor,dia,frente,cartao,periodicidade,mes_venc,varia,inicio,fim&ativo=is.true&order=dia.asc"),
-      rest("parcela_futura?select=id,cartao,mes_ref,valor,frente,pago,pago_em,valor_pago,pago_conta_id&order=mes_ref.asc"),
-      rest("conta_saldo?select=id,nome,frente,tipo,valor,atualizado_em&order=valor.desc"),
+      rest("parcela_futura?select=id,cartao,mes_ref,valor,frente,pago,pago_em,valor_pago,pago_conta_id,antecipado&order=mes_ref.asc"),
+      rest("conta_saldo?select=id,nome,frente,tipo,valor,atualizado_em,conferido_em&order=valor.desc"),
       rest("evento?select=id,data,valor,tipo,frente,descricao,forma,cartao,categoria_id,origem,obs,criado_por,parcelas,parcela_num,grupo,criado_em,baixado_em,baixa_conta_id,baixa_receber_id&data=gte."+janelaInicio()+"&order=data.desc,criado_em.desc&limit=2000"),
       rest("pagamento_conta?select=conta_fixa_id,mes_ref,valor,pago_conta_id&mes_ref=eq."+mes),
-      rest("cartao?select=id,nome,dia_venc,dia_fechamento,limite,frente&ativo=is.true&order=nome.asc"),
+      rest("cartao?select=id,nome,dia_venc,dia_fechamento,limite,frente,debito_auto,conta_debito_id&ativo=is.true&order=nome.asc"),
       rest("fatura_conferida?select=id,cartao,mes_ref,valor_real,valor_app")
     ]);
     const meuId = sessao && sessao.user ? sessao.user.id : null;
@@ -802,6 +805,8 @@ async function carregar(){
     montarLentes(); pintar();
     /* o que venceu desde a ultima abertura entra no caixa agora */
     if(await conciliarCaixa()) pintar();
+    /* fatura em debito automatico que ja venceu sai sozinha da conta certa */
+    if(await pagarDebitosAutomaticos()) pintar();
   }catch(e){
     if(e.status===401){ limparSessao(); location.reload(); return; }
     toast("Não consegui atualizar: "+e.message,true);
@@ -896,6 +901,74 @@ function faturaCheia(nomeCartao, mes){
    Compra no cartao nunca passa por aqui: ela sai da conta quando a fatura e paga. */
 function contaReceber(frente){
   return (dados.saldos||[]).filter(s=>s.tipo==="a_receber").find(s=>s.frente===frente) || null;
+}
+/* Quanto falta pagar de uma fatura: o valor real do documento quando ele foi
+   conferido (so na lente de tudo, porque o documento e do cartao inteiro),
+   senao a projecao; menos o que ja foi antecipado. */
+function aPagarFatura(nomeCartao, mes){
+  const f = fatura(nomeCartao, mes);
+  if(f.pago) return f.aposPago;
+  /* a diferenca entre documento e projecao, e a antecipacao, ficam com a
+     frente dona do cartao; assim as tres lentes continuam somando o total */
+  const cd = (dados.cartoes||[]).find(x=>x.nome===nomeCartao);
+  const dono = cd ? cd.frente : "casa";
+  if(lente!=="tudo" && lente!==dono) return f.total;
+  const cf = (dados.conferidas||[]).find(x=>x.cartao===nomeCartao && x.mes_ref===mes);
+  const p = (dados.parcelas||[]).find(x=>x.cartao===nomeCartao && x.mes_ref===mes);
+  let v = f.total;
+  if(cf) v += (+cf.valor_real - faturaCheia(nomeCartao, mes).total);
+  if(p) v -= +(p.antecipado||0);
+  return Math.max(0, v);
+}
+/* Debito automatico: no dia do vencimento a fatura sai sozinha da conta que o
+   Henrique usa para abastecer aquele cartao. Sem isso o app so sabia que a
+   fatura foi paga se alguem tocasse em "paguei", e o caixa ficava inflado
+   ate la. O valor e o do documento quando a fatura foi conferida, senao a
+   projecao; a diferenca aparece na conferencia do mes. A trava no PATCH
+   (pago=eq.false) impede que os dois celulares debitem a mesma fatura. */
+let pagandoAuto=false;
+async function pagarDebitosAutomaticos(){
+  if(pagandoAuto) return 0;
+  pagandoAuto=true;
+  const hoje=hojeISO(), mes=mesRef(), feitos=[];
+  try{
+    for(const cd of (dados.cartoes||[])){
+      if(!cd.debito_auto || !cd.conta_debito_id) continue;
+      if(!(dados.saldos||[]).some(s=>s.id===cd.conta_debito_id)) continue;
+      for(const m of [mesAnterior(mes), mes]){
+        if(m < MES_ZERO) continue;
+        if(diaDoMes(m, cd.dia_venc||10) > hoje) continue;
+        const p=(dados.parcelas||[]).find(x=>x.cartao===cd.nome && x.mes_ref===m);
+        if(p && p.pago) continue;
+        const cf=(dados.conferidas||[]).find(x=>x.cartao===cd.nome && x.mes_ref===m);
+        const bruto = cf ? +cf.valor_real : +(faturaCheia(cd.nome,m).total).toFixed(2);
+        if(!(bruto>0)) continue;
+        const valor = +Math.max(0, bruto - (p ? +(p.antecipado||0) : 0)).toFixed(2);
+        const campos={pago:true, pago_em:new Date().toISOString(), valor_pago:valor, pago_conta_id:cd.conta_debito_id};
+        if(p){
+          const ok = await rest("parcela_futura?id=eq."+p.id+"&pago=eq.false",
+            {method:"PATCH",headers:{Prefer:"return=representation"},body:JSON.stringify(campos)});
+          if(!ok || !ok.length) continue;          /* outro aparelho pagou primeiro */
+          Object.assign(p, campos);
+        }else{
+          const casal=await meuCasal(); let criada=null;
+          try{
+            criada = await rest("parcela_futura",{method:"POST",headers:{Prefer:"return=representation"},
+              body:JSON.stringify(Object.assign({casal_id:casal, cartao:cd.nome, mes_ref:m, valor:0,
+                                                 frente:cd.frente||"casa"}, campos))});
+          }catch(e){ continue; }
+          if(!criada || !criada[0]) continue;
+          dados.parcelas.push(criada[0]);
+        }
+        if(valor>0) await moverSaldo(cd.conta_debito_id, -valor);
+        const conta=(dados.saldos||[]).find(s=>s.id===cd.conta_debito_id);
+        feitos.push(cd.nome+" "+brl(valor)+(conta?" do "+nomeCurto(conta):""));
+      }
+    }
+  }catch(e){ }
+  finally{ pagandoAuto=false; }
+  if(feitos.length) toast("D\u00e9bito autom\u00e1tico: "+feitos.join(" \u00b7 "));
+  return feitos.length;
 }
 let conciliando=false;
 async function conciliarCaixa(){
@@ -1113,7 +1186,7 @@ function fluxoDiario(r, mesesHorizonte){
        assinaturas e compras avulsas, entao nada aqui repete o de cima. */
     cartoesVisiveis().forEach(cd=>{
       const f = fatura(cd.nome, m);
-      const v = f.pago ? f.aposPago : f.total;
+      const v = aPagarFatura(cd.nome, m);
       add(diaDoMes(m, cd.dia_venc||10), -v, "Fatura "+cd.nome,
           (f.pago ? "lan\u00e7ado depois de a fatura ser paga" : "vence dia "+(cd.dia_venc||10)), "fatura");
     });
@@ -1279,7 +1352,16 @@ function resumo(){
   const faltaBanco = doBanco.filter(c=>!pagosIds.has(c.id)).reduce((a,c)=>a+ +c.valor,0);
   let faltaFaturas = 0;
   cartoesVisiveis().forEach(c=>{ const f=fatura(c.nome,mes);
-    faltaFaturas += f.pago ? f.aposPago : f.total; });
+    faltaFaturas += aPagarFatura(c.nome, mes); });
+  /* O que ja esta nas faturas e ainda nao foi pago: a do mes e a do proximo.
+     No fim do mes as faturas do mes seguinte ja fecharam e vencem em dias;
+     mostrar so as do mes corrente dizia "zero" com quarenta mil para pagar. */
+  let faturasAbertas = 0;
+  cartoesVisiveis().forEach(c=>{ faturasAbertas += aPagarFatura(c.nome, mes) + aPagarFatura(c.nome, proxMes); });
+  /* divida de cartao = parcelas futuras ainda nao pagas, mais o que ja foi
+     comprado a vista e esta nas faturas abertas (antes ficava de fora) */
+  let avulsasAbertas = 0;
+  cartoesVisiveis().forEach(c=>{ [mes, proxMes].forEach(m=>{ const f=fatura(c.nome,m); if(!f.pago) avulsasAbertas += Math.max(0,f.compras); }); });
   const faltaTotal = faltaBanco + faltaFaturas;
 
   /* Quanto sai de verdade num mes futuro: todas as contas fixas que cobram
@@ -1328,14 +1410,20 @@ function resumo(){
     .filter(e=>e.tipo==="entrada" && e.forma!=="cartao" && e.data>hojeISO())
     .reduce((a,e)=>a+ +e.valor,0));
   const folegoComReceber = calcFolego(caixa + receberSemLancado, true);
+  /* Media dos proximos doze meses cheios. Antes o mes corrente entrava so com
+     o que faltava pagar, e no dia 29 isso e quase zero: a media caia um doze
+     avos sem nada ter mudado. */
   const compromissoMedio = (function(){
-    let soma=0, m=mes;
-    for(let i=0;i<12;i++){ soma += (i===0?faltaTotal:compromissoDoMes(m)); m=mesSeguinte(m); }
+    let soma=0, m=proxMes;
+    for(let i=0;i<12;i++){ soma += compromissoDoMes(m); m=mesSeguinte(m); }
     return soma/12;
   })();
+  /* entradas ja datadas (maquininha vendida, Pix agendado) de amanha ate o fim do mes que vem */
+  const entraAteProx = evsFiltrados.filter(e=>e.tipo==="entrada" && e.forma!=="cartao"
+      && e.data>hojeISO() && e.data<mesSeguinte(proxMes)).reduce((a,e)=>a+ +e.valor,0);
   const meses = folego.meses;
   const compromissoProx = compromissoDoMes(proxMes);
-  return {caixa,caixaBruto,reservado,receber,custoFixo,divida,faturaMes,faturaAberta,faturaProx,proxMes,gastoMes,gastoAteHoje,gastoAgendado,gastoParcelaVelha,entradaMes,entradaAteHoje,entradaAgendada,
+  return {entraAteProx,faturasAbertas,avulsasAbertas,caixa,caixaBruto,reservado,receber,custoFixo,divida:divida+avulsasAbertas,faturaMes,faturaAberta,faturaProx,proxMes,gastoMes,gastoAteHoje,gastoAgendado,gastoParcelaVelha,entradaMes,entradaAteHoje,entradaAgendada,
           faltaBanco,faltaFaturas,faltaTotal,doBanco,noCartao,meses,folego,folegoComReceber,
           compromissoMedio,compromissoProx,pagosIds,compromissoDoMes,saldos,contas,parc,mes};
 }
@@ -1383,7 +1471,7 @@ function pintar(){
   const mesAtual=mesRef();
 
   /* ---- os cards, como voce prefere. Os que abrem tem seta no canto ---- */
-  const livre = r.caixa - r.faltaTotal - r.compromissoProx;
+  const livre = r.caixa + r.entraAteProx - r.faltaTotal - r.compromissoProx;
   const proxConta = r.doBanco.filter(c=>!r.pagosIds.has(c.id)).sort((a,b)=>a.dia-b.dia)[0];
   const hoje=new Date(), diaHoje=hoje.getDate();
   const emFechamento = diaHoje<=8 && r.doBanco.some(c=>!r.pagosIds.has(c.id));
@@ -1408,8 +1496,9 @@ function pintar(){
         d:fatVelhas.slice(0,3).map(x=>x.cartao+" "+nomeMes(x.mes_ref)).join(" · ")+" · isso ainda soma na dívida"});
     }
     const paradas=(r.saldos||[]).filter(x=>{
-      if(!x.atualizado_em) return false;
-      const d=new Date(x.atualizado_em); if(isNaN(d)) return false;
+      const q = x.conferido_em || x.atualizado_em;
+      if(!q || !(+x.valor)) return false;
+      const d=new Date(q); if(isNaN(d)) return false;
       return (Date.now()-d.getTime())/86400000 >= 30;
     });
     if(paradas.length){
@@ -1475,7 +1564,7 @@ function pintar(){
     <div class="card full abre" data-p="cartoes">
       <div class="k">CART\u00d5ES, D\u00cdVIDA RESTANTE</div>
       <div class="v ${r.divida>50000?"bad":r.divida>0?"warn":"good"}">${brl(r.divida)}</div>
-      <div class="n">at\u00e9 a \u00faltima parcela \u00b7 ${brl(r.faltaFaturas)} em faturas abertas agora</div></div>
+      <div class="n">at\u00e9 a \u00faltima parcela \u00b7 ${brl(r.faturasAbertas)} nas faturas j\u00e1 abertas, a pagar</div></div>
 
     <div class="card full abre" data-p="fixos">
       <div class="k">CUSTO FIXO DO M\u00caS</div>
@@ -1509,7 +1598,7 @@ function pintar(){
     <div class="card full">
       <div class="k">SOBRA DEPOIS DE ${nomeMes(mesAtual).toUpperCase()} E ${nomeMes(r.proxMes).toUpperCase()}</div>
       <div class="v sm ${livre>=r.custoFixo*3?"good":livre>=r.custoFixo?"warn":"bad"}">${brl(livre)}</div>
-      <div class="n">${brl(r.caixa)} menos ${brl(r.faltaTotal)} deste m\u00eas menos ${brl(r.compromissoProx)} do pr\u00f3ximo</div></div>`;
+      <div class="n">${brl(r.caixa)} em caixa${r.entraAteProx>0 ? ", mais "+brl(r.entraAteProx)+" j\u00e1 datado para entrar" : ""}, menos ${brl(r.faltaTotal)} deste m\u00eas e ${brl(r.compromissoProx)} do pr\u00f3ximo \u00b7 sem contar venda nova</div></div>`;
 
   $("#cards").querySelectorAll("[data-p]").forEach(b=>b.onclick=()=>{
     const p=b.dataset.p;
@@ -2675,8 +2764,9 @@ async function conferirSistema(){
 
   /* 3. saldo conferido ha muito tempo */
   const velhos=(dados.saldos||[]).filter(s=>{
-    if(!s.atualizado_em || +s.valor===0) return false;
-    return (Date.now()-new Date(s.atualizado_em).getTime())/86400000 > 30;
+    const q = s.conferido_em || s.atualizado_em;
+    if(!q || +s.valor===0) return false;
+    return (Date.now()-new Date(q).getTime())/86400000 > 30;
   });
   if(velhos.length) alerta(velhos.length+" saldo"+(velhos.length>1?"s":"")+" sem conferir há mais de 30 dias",
     velhos.map(nomeCurto).join(", ")+". O app só sabe do que passou por ele");
@@ -2851,6 +2941,8 @@ function abrirFechamento(nome){
   $("#fcTitulo").textContent=c.nome;
   $("#fcFech").value = c.dia_fechamento || "";
   $("#fcVenc").value = c.dia_venc || "";
+  $("#fcDebito").innerHTML = '<option value="">N\u00e3o, pago na m\u00e3o</option>'
+    + contasDeCaixa().map(s=>'<option value="'+s.id+'"'+(c.debito_auto && c.conta_debito_id===s.id?" selected":"")+'>'+nomeCurto(s)+'</option>').join("");
   $("#fcMsg").innerHTML="";
   abrirSheet("#sheetFech");
 }
@@ -2860,8 +2952,10 @@ $("#fcSalvar").onclick=async()=>{
   if(!(f>=1&&f<=31)||!(v>=1&&v<=31)){ $("#fcMsg").innerHTML='<div class="msg err">Os dois dias precisam ser de 1 a 31.</div>'; return; }
   try{
     await rest("cartao?id=eq."+fechEd,{method:"PATCH",headers:{Prefer:"return=minimal"},
-      body:JSON.stringify({dia_fechamento:f, dia_venc:v})});
-    const c=dados.cartoes.find(x=>x.id===fechEd); if(c){ c.dia_fechamento=f; c.dia_venc=v; }
+      body:JSON.stringify({dia_fechamento:f, dia_venc:v,
+        debito_auto: !!$("#fcDebito").value, conta_debito_id: $("#fcDebito").value ? +$("#fcDebito").value : null})});
+    const c=dados.cartoes.find(x=>x.id===fechEd);
+    if(c){ c.dia_fechamento=f; c.dia_venc=v; c.debito_auto=!!$("#fcDebito").value; c.conta_debito_id=$("#fcDebito").value? +$("#fcDebito").value : null; }
     fecharSheet("#sheetFech"); toast("Salvo."); pintarCartoes(); pintar();
   }catch(e){ $("#fcMsg").innerHTML='<div class="msg err">'+e.message+'</div>'; }
 };
@@ -3645,7 +3739,8 @@ $("#sdSalvar").onclick = async ()=>{
   const nome=$("#sdNome").value.trim(), valor=parseNum($("#sdValor").value);
   if(!nome){ $("#sdMsg").innerHTML='<div class="msg err">Dê um nome para a conta.</div>'; return; }
   if(isNaN(valor)){ $("#sdMsg").innerHTML='<div class="msg err">Valor inválido.</div>'; return; }
-  const corpo={nome,valor:+valor.toFixed(2),frente:saldoEd.frente,tipo:saldoEd.tipo,atualizado_em:new Date().toISOString()};
+  const agoraSd=new Date().toISOString();
+  const corpo={nome,valor:+valor.toFixed(2),frente:saldoEd.frente,tipo:saldoEd.tipo,atualizado_em:agoraSd,conferido_em:agoraSd};
   try{
     if(saldoEd.id) await rest("conta_saldo?id=eq."+saldoEd.id,{method:"PATCH",headers:{Prefer:"return=minimal"},body:JSON.stringify(corpo)});
     else { corpo.casal_id=await meuCasal(); await rest("conta_saldo",{method:"POST",headers:{Prefer:"return=minimal"},body:JSON.stringify(corpo)}); }

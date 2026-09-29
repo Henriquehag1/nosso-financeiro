@@ -577,7 +577,7 @@ select.inp{appearance:none;background-image:linear-gradient(45deg,transparent 50
    A chave abaixo e publica de proposito: ela sozinha nao le nada.
    Quem decide o que cada pessoa enxerga e o proprio banco (RLS).
    ============================================================ */
-const VERSAO = "47";
+const VERSAO = "48";
 const SB  = "https://oihyhyyhessqnpkknhsi.supabase.co";
 const KEY = "sb_publishable_T7LERNVYS8mAK0tOlWfl5A_4-yCUjie";
 const LS_SESS = "nf.sessao", LS_FILA = "nf.fila", LS_CASAL = "nf.casal", LS_REJ = "nf.recusados", LS_FRENTE = "nf.frenteLanc", LS_CONTA_PG = "nf.contaPagamento";
@@ -1088,12 +1088,24 @@ function comprasNoMes(nomeCartao, mes, desde){
 /* Saude do mes de uma frente: o que entrou de verdade contra o que custou,
    somando custo fixo, gasto lancado e parcela de cartao. Sem isso, "saiu este
    mes" mostra so o que foi digitado e um negocio com aluguel alto parece saudavel. */
+/* Dinheiro que so muda de bolso entre as frentes: retirada da PJ e repasse da
+   confeitaria. Para o casal e renda de verdade. Na lente "tudo" seria a mesma
+   venda contada duas vezes: quando entrou na frente e quando chegou ao casal. */
+const CHAVES_TRANSF = ["retirada pj|","repasse confeitaria|"];
+function ehTransfInterna(e){
+  if(!e || e.tipo!=="entrada") return false;
+  const c=(dados.cat||[]).find(x=>x.id===e.categoria_id);
+  return !!(c && CHAVES_TRANSF.includes(c.chave));
+}
+function contaComoEntrada(e){
+  return e.tipo==="entrada" && e.forma!=="cartao" && !(lente==="tudo" && ehTransfInterna(e));
+}
 function saudeDoMes(m){
   const fim=mesSeguinte(m);
   const evs=filtra(dados.eventos).filter(e=>e.data>=m && e.data<fim);
-  const entrou  = evs.filter(e=>e.tipo==="entrada" && e.forma!=="cartao").reduce((a,e)=>a+ +e.valor,0);
+  const entrou  = evs.filter(contaComoEntrada).reduce((a,e)=>a+ +e.valor,0);
   /* entrada que nao veio da maquininha caiu na hora, entao ja e venda do mes */
-  const naVista = evs.filter(e=>e.tipo==="entrada" && e.forma!=="cartao" && e.forma!=="maquininha")
+  const naVista = evs.filter(e=>contaComoEntrada(e) && e.forma!=="maquininha")
                      .reduce((a,e)=>a+ +e.valor,0);
   const estorno = evs.filter(e=>e.tipo==="entrada" && e.forma==="cartao").reduce((a,e)=>a+ +e.valor,0);
   /* parcelado no cartao ja vem por parcela_futura, senao conta duas vezes */
@@ -1123,7 +1135,7 @@ function vendasDoMes(m){
    conferidas, faturas batidas com documento e recebiveis datados. Julho para
    tras tem dado pela metade e uma leitura de saude ali enganaria. */
 const MES_ZERO = "2026-08-01";
-let saudeMes=null;
+let saudeMes=null, entrouMes=null;
 function mesesComDado(ate){
   const out=[]; let m=MES_ZERO;
   while(m<=ate){ out.push(m); m=mesSeguinte(m); }
@@ -1343,8 +1355,8 @@ function resumo(){
                            .reduce((a,e)=>a+ +e.valor,0);
   const gastoParcelaVelha = evs.filter(e=>e.tipo==="gasto" && ehParcelaVelha(e))
                                .reduce((a,e)=>a+ +e.valor,0);
-  const entradaMes = evs.filter(e=>e.tipo==="entrada" && e.forma!=="cartao").reduce((a,e)=>a+ +e.valor,0);
-  const entradaAteHoje = evs.filter(e=>e.tipo==="entrada" && e.forma!=="cartao" && e.data<=hojeQ).reduce((a,e)=>a+ +e.valor,0);
+  const entradaMes = evs.filter(contaComoEntrada).reduce((a,e)=>a+ +e.valor,0);
+  const entradaAteHoje = evs.filter(e=>contaComoEntrada(e) && e.data<=hojeQ).reduce((a,e)=>a+ +e.valor,0);
   const entradaAgendada = entradaMes - entradaAteHoje;
   const pagosIds = new Set(dados.pagos.map(p=>p.conta_fixa_id));
   const doBanco = contas.filter(c=>!c.cartao && cobraNesteMes(c,mes));
@@ -1384,7 +1396,7 @@ function resumo(){
      como parcela de maquininha, nao previsao. */
   const entraNoMes = (m)=>{
     const fim = mesSeguinte(m);
-    return evsFiltrados.filter(e=>e.tipo==="entrada" && e.forma!=="cartao" && e.data>=m && e.data<fim)
+    return evsFiltrados.filter(e=>contaComoEntrada(e) && e.data>=m && e.data<fim)
       .reduce((a,e)=>a+ +e.valor,0);
   };
   /* comEntradas: soma no mes certo o que ja esta contratado para entrar.
@@ -1419,7 +1431,7 @@ function resumo(){
     return soma/12;
   })();
   /* entradas ja datadas (maquininha vendida, Pix agendado) de amanha ate o fim do mes que vem */
-  const entraAteProx = evsFiltrados.filter(e=>e.tipo==="entrada" && e.forma!=="cartao"
+  const entraAteProx = evsFiltrados.filter(e=>contaComoEntrada(e)
       && e.data>hojeISO() && e.data<mesSeguinte(proxMes)).reduce((a,e)=>a+ +e.valor,0);
   const meses = folego.meses;
   const compromissoProx = compromissoDoMes(proxMes);
@@ -1572,7 +1584,7 @@ function pintar(){
       <div class="n">tudo que se repete: moradia, consult\u00f3rio, confeitaria e assinaturas</div></div>
 
     ${(function(){
-      saudeMes=null;                       /* a folha sempre abre no mes corrente */
+      saudeMes=null; entrouMes=null;       /* as folhas sempre abrem no mes corrente */
       const sd=saudeDoMes(mesAtual);
       const nome = lente==="tudo" ? "DE TUDO" : "D"+(lente==="casa"?"O CASAL":lente==="consultorio"?"O CONSULT\u00d3RIO":"A CONFEITARIA");
       const cor = sd.operacional>0 ? "good" : sd.operacional<0 ? "bad" : "";
@@ -1590,7 +1602,7 @@ function pintar(){
         + (r.gastoAgendado>0 ? " \u00b7 mais "+brl0(r.gastoAgendado)+" com data ainda por vir" : "")
         + (r.gastoParcelaVelha>0 ? " \u00b7 mais "+brl0(r.gastoParcelaVelha)+" de parcela antiga" : "")}</div></div>
 
-    <div class="card"><div class="k">ENTROU ESTE M\u00caS</div>
+    <div class="card abre" data-p="entrou"><div class="k">ENTROU ESTE M\u00caS</div>
       <div class="v sm good">${brl(r.entradaAteHoje)}</div>
       <div class="n">${"o que j\u00e1 caiu, at\u00e9 hoje"
         + (r.entradaAgendada>0 ? " \u00b7 mais "+brl0(r.entradaAgendada)+" ainda vai cair este m\u00eas" : "")}</div></div>
@@ -1795,6 +1807,7 @@ function pintarGrafFluxo(){
   const porMes={};
   evs.forEach(e=>{
     if(e.data>hojeISO()) return;              /* nada de parcela futura aqui */
+    if(lente==="tudo" && ehTransfInterna(e)) return;   /* so troca de bolso entre as frentes */
     const k=e.data.slice(0,7)+"-01";
     porMes[k]=porMes[k]||{e:0,s:0};
     if(e.tipo==="entrada") porMes[k].e+= +e.valor; else porMes[k].s+= +e.valor;
@@ -2024,6 +2037,88 @@ function abrirLista(qual){
     $("#slConteudo").querySelectorAll("[data-saldo]").forEach(el=>el.onclick=()=>{
       fecharSheet("#sheetLista"); abrirSaldo(+el.dataset.saldo);
     });
+  }
+
+  /* ---------- entrou no mes, de onde veio ----------
+     "Entrou 25 mil" sem abrir nao responde a pergunta que importa: de qual
+     app, de qual cliente, em qual conta. Aqui o numero se abre por origem. */
+  if(qual==="entrou"){
+    const meses=mesesComDado(mesRef());
+    if(!entrouMes || entrouMes<MES_ZERO || entrouMes>mesRef()) entrouMes=mesRef();
+    const m=entrouMes, fimM=mesSeguinte(m), hj=hojeISO();
+    const nomeF = lente==="tudo" ? "" : " "+(lente==="casa"?"no casal":lente==="consultorio"?"no consultório":"na confeitaria");
+    const doMes=filtra(dados.eventos).filter(e=>e.tipo==="entrada" && e.forma!=="cartao" && e.data>=m && e.data<fimM);
+    const transf = doMes.filter(e=>lente==="tudo" && ehTransfInterna(e));
+    const valem = doMes.filter(e=>!transf.includes(e));
+    const caiu = valem.filter(e=>e.data<=hj), vai = valem.filter(e=>e.data>hj);
+    const soma=a=>a.reduce((x,e)=>x+ +e.valor,0);
+    const total=soma(caiu);
+    const grupos={};
+    caiu.forEach(e=>{ const k=e.categoria_id||0; (grupos[k]=grupos[k]||[]).push(e); });
+    const ordem=Object.keys(grupos).sort((a,b)=>soma(grupos[b])-soma(grupos[a]));
+    const nomeDe=k=>{ const c=dados.cat.find(x=>x.id===+k); return c ? nomeCat(c) : "Sem categoria"; };
+    const contaDe=e=>{ const s=(dados.saldos||[]).find(x=>x.id===e.baixa_conta_id); return s ? nomeCurto(s) : ""; };
+    const pct=v=> total>0 ? (v/total*100).toFixed(0)+"%" : "";
+
+    $("#slTitulo").textContent="Entrou"+nomeF+(m===mesRef()?" este mês":" em "+nomeMes(m));
+    $("#slNota").innerHTML="Em "+nomeMes(m)+(m===mesRef()?", até hoje,":"")+" caiu na conta <b style='color:var(--good)'>"+brl(total)+"</b>"
+      + (vai.length ? ", e mais <b>"+brl(soma(vai))+"</b> ainda vai cair até o fim do mês" : "")+". "
+      + "É dinheiro que entrou de fato: repasse de app, vale-refeição, Pix de cliente, maquininha no dia em que caiu. "
+      + "Toque numa origem para ver lançamento por lançamento."
+      + (transf.length ? "<br><br>Na visão de tudo junto, <b>"+brl(soma(transf))+"</b> de retirada da PJ e repasse da confeitaria "
+          + "ficam de fora: é o mesmo dinheiro mudando de bolso, já contado quando entrou no consultório ou na confeitaria." : "");
+    $("#slAdd").textContent=""; $("#slAdd").onclick=null;
+
+    const linhaEv=(e)=>{
+      const quando = e.data>hj ? "cai em "+dataCurta(e.data) : rotuloDia(e.data);
+      const onde = contaDe(e);
+      return '<div class="row tap" data-ev="'+e.id+'"><div class="mid">'
+        + '<div class="t">'+(e.descricao||nomeDe(e.categoria_id))+'</div>'
+        + '<div class="s">'+quando+(onde?" · "+onde:"")+(lente==="tudo"?" · "+rotulo(e.frente):"")+'</div></div>'
+        + '<div class="amt in">'+brl(e.valor)+'</div></div>';
+    };
+    let html='';
+    if(meses.length>1){
+      html += '<div class="chips" id="entrouMeses" style="margin:0 0 14px">'
+        + meses.slice(-12).map(x=>'<button class="chip'+(x===m?" on":"")+'" data-em="'+x+'">'
+            + (x===mesRef()? "este mês" : nomeMes(x))+'</button>').join("")
+        + '</div>';
+    }
+    if(ordem.length){
+      html += '<div class="sechead" style="margin:4px 0 8px"><h2 class="sec">De onde veio</h2>'
+        + '<span class="add" style="color:var(--ink3)">'+brl(total)+'</span></div><div class="list">'
+        + ordem.map(k=>{ const v=soma(grupos[k]), n=grupos[k].length;
+            return '<div class="row tap" data-grp="'+k+'"><div class="mid"><div class="t">'+nomeDe(k)+'</div>'
+              + '<div class="s">'+n+(n===1?" lançamento":" lançamentos")+' · '+pct(v)+' do total</div></div>'
+              + '<div class="amt in">'+brl(v)+'</div></div>'; }).join("")
+        + '</div>';
+      ordem.forEach(k=>{
+        const it=grupos[k].slice().sort((a,b)=>a.data<b.data?-1:a.data>b.data?1:0);
+        html += '<div class="sechead" id="grp'+k+'" style="margin:18px 0 8px"><h2 class="sec">'+nomeDe(k)+'</h2>'
+          + '<span class="add" style="color:var(--ink3)">'+brl(soma(it))+'</span></div>'
+          + '<div class="list">'+it.map(linhaEv).join("")+'</div>';
+      });
+    }
+    if(vai.length){
+      html += '<div class="sechead" style="margin:18px 0 8px"><h2 class="sec" style="color:var(--warn)">Ainda vai cair em '+nomeMes(m)+'</h2>'
+        + '<span class="add" style="color:var(--ink3)">'+brl(soma(vai))+'</span></div>'
+        + '<div class="list">'+vai.slice().sort((a,b)=>a.data<b.data?-1:1).map(linhaEv).join("")+'</div>';
+    }
+    if(transf.length){
+      html += '<div class="sechead" style="margin:18px 0 8px"><h2 class="sec" style="color:var(--ink3)">Troca de bolso, não soma aqui</h2>'
+        + '<span class="add" style="color:var(--ink3)">'+brl(soma(transf))+'</span></div>'
+        + '<div class="list">'+transf.slice().sort((a,b)=>a.data<b.data?-1:1).map(linhaEv).join("")+'</div>';
+    }
+    $("#slConteudo").innerHTML = html || '<div class="empty">Nada entrou em '+nomeMes(m)+' nesta lente.</div>';
+    const box=$("#entrouMeses");
+    if(box) box.querySelectorAll("[data-em]").forEach(b=>b.onclick=()=>{ entrouMes=b.dataset.em; abrirLista("entrou"); });
+    $("#slConteudo").querySelectorAll("[data-grp]").forEach(el=>el.onclick=()=>{
+      const alvo=document.getElementById("grp"+el.dataset.grp); if(alvo) alvo.scrollIntoView({behavior:"smooth",block:"start"});
+    });
+    $("#slConteudo").querySelectorAll("[data-ev]").forEach(el=>el.onclick=()=>{
+      fecharSheet("#sheetLista"); abrirFolha(el.dataset.ev);
+    });
+    abrirSheet("#sheetLista");
   }
 
   /* ---------- saude do mes, entrou contra custou ---------- */

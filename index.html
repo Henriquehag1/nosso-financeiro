@@ -595,7 +595,7 @@ select.inp{appearance:none;background-image:linear-gradient(45deg,transparent 50
    A chave abaixo e publica de proposito: ela sozinha nao le nada.
    Quem decide o que cada pessoa enxerga e o proprio banco (RLS).
    ============================================================ */
-const VERSAO = "51";
+const VERSAO = "52";
 const SB  = "https://oihyhyyhessqnpkknhsi.supabase.co";
 const KEY = "sb_publishable_T7LERNVYS8mAK0tOlWfl5A_4-yCUjie";
 const LS_SESS = "nf.sessao", LS_FILA = "nf.fila", LS_CASAL = "nf.casal", LS_REJ = "nf.recusados", LS_FRENTE = "nf.frenteLanc", LS_CONTA_PG = "nf.contaPagamento";
@@ -1130,12 +1130,15 @@ function saudeDoMes(m){
                      .reduce((a,e)=>a+ +e.valor,0);
   const estorno = evs.filter(e=>e.tipo==="entrada" && e.forma==="cartao").reduce((a,e)=>a+ +e.valor,0);
   /* parcelado no cartao ja vem por parcela_futura, senao conta duas vezes */
+  const itGastos = evs.filter(e=>(e.tipo==="gasto" && ((e.parcelas||1)===1 || e.forma!=="cartao"))
+                              || (e.tipo==="entrada" && e.forma==="cartao"));
   const lancado = evs.filter(e=>e.tipo==="gasto" && ((e.parcelas||1)===1 || e.forma!=="cartao"))
                      .reduce((a,e)=>a+ +e.valor,0) - estorno;
-  const fixas    = filtra(dados.contas).filter(c=>cobraNesteMes(c,m)).reduce((a,c)=>a+ +c.valor,0);
+  const itFixas  = filtra(dados.contas).filter(c=>cobraNesteMes(c,m));
+  const fixas    = itFixas.reduce((a,c)=>a+ +c.valor,0);
   const parcelas = filtra(dados.parcelas).filter(p=>p.mes_ref===m).reduce((a,p)=>a+ +p.valor,0);
   const custoMes = lancado + fixas;
-  return { m, entrou, naVista, lancado, fixas, parcelas, custoMes,
+  return { m, entrou, naVista, lancado, fixas, parcelas, custoMes, itFixas, itGastos,
            operacional: entrou - custoMes,
            resultado:   entrou - custoMes - parcelas,
            margem: entrou>0 ? (entrou-custoMes)/entrou*100 : null };
@@ -1157,6 +1160,23 @@ function vendasDoMes(m){
    tras tem dado pela metade e uma leitura de saude ali enganaria. */
 const MES_ZERO = "2026-08-01";
 let saudeMes=null, entrouMes=null;
+/* Saude com historico: antes de agosto/26 so existe a entrada, tirada do
+   extrato (receita_historico). Vale para confeitaria e consultorio. */
+function mesesSaude(){
+  const s=new Set(mesesComDado(mesRef()));
+  if(lente==="confeitaria" || lente==="consultorio")
+    (dados.historico||[]).forEach(h=>{ if(h.tipo==="caixa" && h.frente===lente && h.mes<MES_ZERO) s.add(h.mes); });
+  return [...s].sort().slice(-13);
+}
+function saudeDoMesH(m){
+  if(m<MES_ZERO && (lente==="confeitaria" || lente==="consultorio")){
+    const hs=(dados.historico||[]).filter(h=>h.tipo==="caixa" && h.frente===lente && h.mes===m);
+    const porCanal={}; hs.forEach(h=>porCanal[h.canal]=(porCanal[h.canal]||0)+ +h.valor);
+    const entrou=hs.reduce((a,h)=>a+ +h.valor,0);
+    return { m, historico:true, entrou, porCanal, custoMes:0, operacional:null, margem:null, parcelas:0, itFixas:[], itGastos:[] };
+  }
+  return saudeDoMes(m);
+}
 /* ---------- entrou por canal: historico + lancamentos ----------
    Antes de agosto/26 o app nao tinha lancamento; o que existe e o resumo
    mensal tirado do extrato bancario (tabela receita_historico). A partir
@@ -2345,85 +2365,147 @@ function abrirLista(qual){
   if(qual==="saude"){
     const nomeF = lente==="tudo" ? "de tudo junto"
       : (lente==="casa"?"do casal":lente==="consultorio"?"do consultório":"da confeitaria");
-    const meses=mesesComDado(mesRef());
-    if(!saudeMes || saudeMes<MES_ZERO || saudeMes>mesRef()) saudeMes=mesRef();
+    const meses=mesesSaude();
+    if(!saudeMes || !meses.includes(saudeMes)) saudeMes=mesRef();
     const mes=saudeMes;                       /* o mes que a folha esta mostrando */
-    const hist=meses.slice(-12).map(saudeDoMes);
-    const sd=saudeDoMes(mes);
+    const hist=meses.map(saudeDoMesH);
+    const sd=saudeDoMesH(mes);
+    const hj=hojeISO();
+    const soma=a=>a.reduce((x,e)=>x+ +e.valor,0);
 
-    $("#slTitulo").textContent="Saúde "+nomeF;
-    $("#slNota").innerHTML="Entrou <b style='color:var(--good)'>"+brl(sd.entrou)+"</b> e custou <b>"+brl(sd.custoMes)+"</b> em "
-      + nomeMes(mes)+". Sobra <b style='color:"+(sd.operacional>=0?"var(--good)":"var(--bad)")+"'>"+brl(sd.operacional)+"</b>"
-      + (sd.margem!==null? ", ou "+sd.margem.toFixed(0)+"% do que entrou" : "")+". "
-      + "Custo é tudo que o mês consome: conta fixa, assinatura e gasto lançado."
-      + (mes===mesRef() ? " <b style='color:var(--warn)'>Mês em andamento</b>, dia "+(new Date().getDate())+", ainda vai entrar e sair coisa." : "");
-    $("#slAdd").textContent=""; $("#slAdd").onclick=null;
-
-    const linha=(nome,det,valor,cor)=>'<div class="row"><div class="mid"><div class="t">'+nome+'</div>'
+    const linha=(nome,det,valor,cor,attr)=>'<div class="row'+(attr?' tap" '+attr:'"')+'><div class="mid"><div class="t">'+nome+'</div>'
       +(det?'<div class="s">'+det+'</div>':'')+'</div><div class="amt"'+(cor?' style="color:'+cor+'"':'')+'>'+brl(valor)+'</div></div>';
 
     let html='';
     if(meses.length>1){
       html += '<div class="chips" id="saudeMeses" style="margin:0 0 14px">'
-        + meses.slice(-12).map(x=>'<button class="chip'+(x===mes?" on":"")+'" data-sm="'+x+'">'
+        + meses.map(x=>'<button class="chip'+(x===mes?" on":"")+'" data-sm="'+x+'">'
             + (x===mesRef()? "este mês" : nomeMes(x))+'</button>').join("")
         + '</div>';
     }
-    html += '<div class="sechead" style="margin:4px 0 8px"><h2 class="sec">'
-      + (mes===mesRef()?"Este mês":nomeMes(mes))+', por dentro</h2></div><div class="list">'
-      + linha("Entrou","recebimentos e vendas lançados, sem estorno",sd.entrou,"var(--good)")
-      + linha("Contas fixas e assinaturas","o que se repete todo mês nesta frente",-sd.fixas,"var(--bad)")
-      + linha("Gastos lançados","compras à vista e parcelado fora do cartão",-sd.lancado,"var(--bad)")
-      + linha("Sobra do mês","entrou menos o que o mês custou",sd.operacional, sd.operacional>=0?"var(--good)":"var(--bad)")
-      + '</div>';
 
-    /* venda na maquininha entra 30, 60 e 90 dias depois: sem isto um mes de
-       venda forte aparece como prejuizo, porque o dinheiro ainda nao chegou */
-    const noCartao=vendasDoMes(mes), vendido=noCartao+sd.naVista;
-    if(noCartao>0 || vendasDoMes(mesAnterior(mes))>0){
-      html += '<div class="sechead"><h2 class="sec" style="color:var(--blue)">Vendido neste mês</h2>'
-        + '<span class="add" style="color:var(--ink3)">' + brl(vendido) + '</span></div><div class="list">'
-        + linha("Vendas no cartão fechadas em "+nomeMes(mes),"líquido de taxa; o dinheiro cai em 30, 60 e 90 dias",noCartao,"var(--blue)")
-        + linha("Recebido na hora","Pix e outras entradas que caíram no próprio mês",sd.naVista,"var(--blue)")
-        + linha("Sobra pelo que foi vendido","em vez do que já caiu na conta",vendido - sd.custoMes,
-                (vendido - sd.custoMes)>=0?"var(--good)":"var(--bad)")
-        + '</div><div class="nota" style="padding:10px 2px 0">Esta é a leitura de negócio: conta a venda no mês em que ela aconteceu. '
-        + 'A de cima é a leitura de caixa: conta o dinheiro no dia em que ele entra. Um mês de venda forte aparece fraco na de cima '
-        + 'porque a maquininha paga em três vezes.</div>';
-    }
-
-    if(sd.parcelas>0){
-      html += '<div class="sechead"><h2 class="sec" style="color:var(--warn)">Dívida de meses anteriores</h2></div><div class="list">'
-        + linha("Parcelas de cartão que vencem agora","compras de antes, não é custo deste mês",-sd.parcelas,"var(--warn)")
-        + linha("Depois de pagar as parcelas","o que sobra de verdade no caixa",sd.resultado, sd.resultado>=0?"var(--good)":"var(--bad)")
+    if(sd.historico){
+      /* mes anterior ao app: so a entrada existe, tirada do extrato */
+      $("#slTitulo").textContent="Saúde "+nomeF;
+      $("#slNota").innerHTML="Em "+nomeMes(mes)+" entrou <b style='color:var(--good)'>"+brl(sd.entrou)+"</b>. "
+        + "Este mês é anterior ao app: a entrada vem do extrato do banco, canal por canal. "
+        + "O custo daquela época não foi registrado, então a sobra não é calculada. Toque na entrada para ver de onde veio.";
+      $("#slAdd").textContent=""; $("#slAdd").onclick=null;
+      const ord=Object.keys(sd.porCanal).sort((a,b)=>sd.porCanal[b]-sd.porCanal[a]);
+      html += '<div class="sechead" style="margin:4px 0 8px"><h2 class="sec">'+nomeMes(mes)+', por dentro</h2></div><div class="list">'
+        + linha("Entrou","toque para abrir por canal",sd.entrou,"var(--good)",'data-go="entrou"')
+        + ord.map(c=>linha('<span style="color:var(--ink2)">· '+(c==="Delivery proprio"?"Delivery próprio (Yooga)":c)+'</span>',"",sd.porCanal[c],"var(--ink2)",'data-go="entrou"')).join("")
+        + '<div class="row"><div class="mid"><div class="t" style="color:var(--ink3)">Custou</div>'
+        + '<div class="s">sem registro antes de agosto de 2026</div></div><div class="amt" style="color:var(--ink3)">–</div></div>'
         + '</div>';
+    }else{
+      $("#slTitulo").textContent="Saúde "+nomeF;
+      $("#slNota").innerHTML="Entrou <b style='color:var(--good)'>"+brl(sd.entrou)+"</b> e custou <b>"+brl(sd.custoMes)+"</b> em "
+        + nomeMes(mes)+". Sobra <b style='color:"+(sd.operacional>=0?"var(--good)":"var(--bad)")+"'>"+brl(sd.operacional)+"</b>"
+        + (sd.margem!==null? ", ou "+sd.margem.toFixed(0)+"% do que entrou" : "")+". "
+        + "Custo é tudo que o mês consome: conta fixa, assinatura e gasto lançado. Toque em cada linha para ver item por item."
+        + (mes===mesRef() ? " <b style='color:var(--warn)'>Mês em andamento</b>, dia "+(new Date().getDate())+", ainda vai entrar e sair coisa." : "");
+      $("#slAdd").textContent=""; $("#slAdd").onclick=null;
+
+      html += '<div class="sechead" style="margin:4px 0 8px"><h2 class="sec">'
+        + (mes===mesRef()?"Este mês":nomeMes(mes))+', por dentro</h2></div><div class="list">'
+        + linha("Entrou","recebimentos e vendas lançados · toque para abrir por origem",sd.entrou,"var(--good)",'data-go="entrou"')
+        + linha("Contas fixas e assinaturas",sd.itFixas.length+" itens · toque para ver",-sd.fixas,"var(--bad)",'data-ir="sdFixas"')
+        + linha("Gastos lançados",sd.itGastos.length+" lançamentos · toque para ver",-sd.lancado,"var(--bad)",'data-ir="sdGastos"')
+        + linha("Sobra do mês","entrou menos o que o mês custou",sd.operacional, sd.operacional>=0?"var(--good)":"var(--bad)")
+        + '</div>';
+
+      /* venda na maquininha entra 30, 60 e 90 dias depois: sem isto um mes de
+         venda forte aparece como prejuizo, porque o dinheiro ainda nao chegou */
+      const noCartao=vendasDoMes(mes), vendido=noCartao+sd.naVista;
+      if(noCartao>0 || vendasDoMes(mesAnterior(mes))>0){
+        html += '<div class="sechead"><h2 class="sec" style="color:var(--blue)">Vendido neste mês</h2>'
+          + '<span class="add" style="color:var(--ink3)">' + brl(vendido) + '</span></div><div class="list">'
+          + linha("Vendas no cartão fechadas em "+nomeMes(mes),"líquido de taxa; o dinheiro cai em 30, 60 e 90 dias",noCartao,"var(--blue)")
+          + linha("Recebido na hora","Pix e outras entradas que caíram no próprio mês",sd.naVista,"var(--blue)")
+          + linha("Sobra pelo que foi vendido","em vez do que já caiu na conta",vendido - sd.custoMes,
+                  (vendido - sd.custoMes)>=0?"var(--good)":"var(--bad)")
+          + '</div><div class="nota" style="padding:10px 2px 0">Esta é a leitura de negócio: conta a venda no mês em que ela aconteceu. '
+          + 'A de cima é a leitura de caixa: conta o dinheiro no dia em que ele entra. Um mês de venda forte aparece fraco na de cima '
+          + 'porque a maquininha paga em três vezes.</div>';
+      }
+
+      if(sd.parcelas>0){
+        html += '<div class="sechead"><h2 class="sec" style="color:var(--warn)">Dívida de meses anteriores</h2></div><div class="list">'
+          + linha("Parcelas de cartão que vencem agora","compras de antes, não é custo deste mês",-sd.parcelas,"var(--warn)")
+          + linha("Depois de pagar as parcelas","o que sobra de verdade no caixa",sd.resultado, sd.resultado>=0?"var(--good)":"var(--bad)")
+          + '</div>';
+      }
     }
 
-    const maior=Math.max(1,...hist.map(h=>Math.max(h.entrou,h.custoMes)));
+    /* mes a mes: cada linha abre o mes */
+    const comCusto=hist.filter(h=>!h.historico);
+    const maior=Math.max(1,...hist.map(h=>Math.max(h.entrou,h.custoMes||0)));
     html += '<div class="sechead"><h2 class="sec">'
       + (hist.length===1 ? "Este mês" : "Mês a mês, desde "+nomeMes(hist[0].m)) + '</h2>'
       + '<span class="legenda2"><span><i style="background:var(--serieEntra)"></i>entrou</span>'
       + '<span><i style="background:var(--serieSai)"></i>custou</span></span></div>'
       + '<div class="card full graf">'
-      + hist.map(h=>'<div class="gr"><div class="mes">'+nomeMes(h.m).slice(0,3)+'</div>'
+      + hist.map(h=>'<div class="gr tap'+(h.m===mes?' hoje':'')+'" data-sm="'+h.m+'" style="cursor:pointer"><div class="mes">'+nomeMes(h.m).slice(0,3)+'</div>'
           + '<div class="par">'
           + '<div class="trilho"><i style="width:'+Math.max(0.5,h.entrou/maior*100).toFixed(1)+'%;background:var(--serieEntra)"></i></div>'
-          + '<div class="trilho"><i style="width:'+Math.max(0.5,h.custoMes/maior*100).toFixed(1)+'%;background:var(--serieSai)"></i></div>'
+          + '<div class="trilho">'+(h.historico?'':'<i style="width:'+Math.max(0.5,h.custoMes/maior*100).toFixed(1)+'%;background:var(--serieSai)"></i>')+'</div>'
           + '</div>'
-          + '<div class="val" style="color:'+(h.operacional>=0?"var(--good)":"var(--bad)")+'">'
-          + (h.operacional>=0?"+":"\u2212")+brl0(Math.abs(h.operacional))+'</div></div>').join("")
+          + (h.historico
+              ? '<div class="val" style="color:var(--ink3)">'+brl0(h.entrou)+'</div>'
+              : '<div class="val" style="color:'+(h.operacional>=0?"var(--good)":"var(--bad)")+'">'
+                + (h.operacional>=0?"+":"−")+brl0(Math.abs(h.operacional))+'</div>')
+          + '</div>').join("")
       + '<div class="nota">A barra de cima é o que entrou, a de baixo é o que o mês custou. '
-      + 'O número da direita é a sobra. Mês sem lançamento aparece vazio, não quer dizer que não houve movimento. '
-      + 'Toque num mês acima para abrir o detalhe dele.</div></div>';
+      + 'O número da direita é a sobra'+(comCusto.length<hist.length?'; nos meses sem custo registrado, antes de agosto, mostra só o que entrou':'')+'. '
+      + 'Toque num mês para abrir o detalhe dele.</div></div>';
+
+    /* item por item do mes: contas fixas e gastos */
+    if(!sd.historico){
+      if(sd.itFixas.length){
+        html += '<div class="sechead" id="sdFixas" style="margin:18px 0 8px"><h2 class="sec">Contas fixas e assinaturas de '+nomeMes(mes)+'</h2>'
+          + '<span class="add" style="color:var(--ink3)">'+brl(sd.fixas)+'</span></div><div class="list">'
+          + sd.itFixas.slice().sort((a,b)=>b.valor-a.valor).map(c=>'<div class="row tap" data-cf="'+c.id+'"><div class="mid">'
+              + '<div class="t">'+String(c.descricao||"").replace("Assinatura ","")+'</div>'
+              + '<div class="s">'+(c.cartao?"no cartão "+c.cartao:"sai do banco")+(c.dia?" · dia "+c.dia:"")
+              + (lente==="tudo"?" · "+rotulo(c.frente):"")+(c.periodicidade==="anual"?" · anual":"")+'</div></div>'
+              + '<div class="amt">'+brl(c.valor)+'</div></div>').join("")
+          + '</div>';
+      }
+      if(sd.itGastos.length){
+        const nomeDe=id=>{ const c=dados.cat.find(x=>x.id===id); return c ? nomeCat(c) : "Sem categoria"; };
+        const grupos={};
+        sd.itGastos.forEach(e=>{ const k=nomeDe(e.categoria_id); (grupos[k]=grupos[k]||[]).push(e); });
+        const valorG=e=>e.tipo==="entrada" ? -e.valor : +e.valor;
+        const ordem=Object.keys(grupos).sort((a,b)=>grupos[b].reduce((x,e)=>x+valorG(e),0)-grupos[a].reduce((x,e)=>x+valorG(e),0));
+        html += '<div class="sechead" id="sdGastos" style="margin:18px 0 8px"><h2 class="sec">Gastos lançados em '+nomeMes(mes)+'</h2>'
+          + '<span class="add" style="color:var(--ink3)">'+brl(sd.lancado)+'</span></div>'
+          + ordem.map(k=>{
+              const it=grupos[k].slice().sort((a,b)=>a.data<b.data?1:-1);
+              return '<div class="sechead" style="margin:10px 0 6px"><h2 class="sec" style="font-size:13px;color:var(--ink2)">'+k+'</h2>'
+                + '<span class="add" style="color:var(--ink3)">'+brl(it.reduce((x,e)=>x+valorG(e),0))+'</span></div><div class="list">'
+                + it.map(e=>'<div class="row tap" data-ev="'+e.id+'"><div class="mid"><div class="t">'+(e.descricao||k)+'</div>'
+                    + '<div class="s">'+(e.data>hj?"agendado para "+dataCurta(e.data):rotuloDia(e.data))
+                    + (e.tipo==="entrada"?" · estorno":"")+(e.forma?" · "+e.forma:"")+(lente==="tudo"?" · "+rotulo(e.frente):"")+'</div></div>'
+                    + '<div class="amt"'+(e.tipo==="entrada"?' style="color:var(--good)"':'')+'>'+(e.tipo==="entrada"?"+":"")+brl(e.valor)+'</div></div>').join("")
+                + '</div>';
+            }).join("");
+      }
+    }
 
     html += '<div class="nota" style="padding:12px 2px 0;color:var(--ink3)">'
-      + 'O histórico começa em agosto de 2026, primeiro mês com contas fixas conferidas, '
-      + 'faturas batidas com documento e recebíveis datados. Antes disso o dado é parcial e a leitura enganaria. '
-      + 'A cada mês novo a lista cresce sozinha.</div>';
+      + (meses[0]<MES_ZERO
+          ? 'Até julho de 2026 só a entrada existe, tirada do extrato do banco. De agosto em diante vale tudo que é lançado no app: '
+          : 'O histórico começa em agosto de 2026, primeiro mês com contas fixas conferidas e faturas batidas com documento. ')
+      + 'todo lançamento novo, conta fixa ou recebimento entra aqui na hora, e a cada mês novo a lista cresce sozinha.</div>';
 
     $("#slConteudo").innerHTML=html;
-    const box=$("#saudeMeses");
-    if(box) box.querySelectorAll("[data-sm]").forEach(b=>b.onclick=()=>{ saudeMes=b.dataset.sm; abrirLista("saude"); });
+    $("#slConteudo").querySelectorAll("[data-sm]").forEach(b=>b.onclick=()=>{ saudeMes=b.dataset.sm; abrirLista("saude"); });
+    $("#slConteudo").querySelectorAll("[data-go]").forEach(b=>b.onclick=()=>{ entrouMes=mes; abrirLista("entrou"); });
+    $("#slConteudo").querySelectorAll("[data-ir]").forEach(b=>b.onclick=()=>{
+      const alvo=document.getElementById(b.dataset.ir); if(alvo) alvo.scrollIntoView({behavior:"smooth",block:"start"}); });
+    $("#slConteudo").querySelectorAll("[data-ev]").forEach(el=>el.onclick=()=>{ fecharSheet("#sheetLista"); abrirFolha(el.dataset.ev); });
+    $("#slConteudo").querySelectorAll("[data-cf]").forEach(el=>el.onclick=()=>{ fecharSheet("#sheetLista"); abrirConta(+el.dataset.cf); });
     abrirSheet("#sheetLista");
   }
 

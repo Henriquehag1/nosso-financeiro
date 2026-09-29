@@ -107,6 +107,24 @@ body.travada .dock{display:none}
 .legenda2 span{display:flex;align-items:center;gap:5px}
 .legenda2 i{width:9px;height:9px;border-radius:2px;display:inline-block}
 
+.kpis{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:0 0 14px}
+.kpi{background:var(--surface2);border-radius:12px;padding:10px 12px}
+.kpi .l{font-size:11px;color:var(--ink2);line-height:1.3}
+.kpi .v{font-size:19px;font-weight:600;margin-top:3px;letter-spacing:-.02em;color:var(--ink);font-variant-numeric:tabular-nums}
+.kpi .d{font-size:11px;color:var(--ink3);margin-top:2px}
+.kpi .d b{font-weight:600}
+.colchart{background:var(--surface2);border-radius:12px;padding:10px 8px 6px;margin:0 0 8px}
+.colchart svg{display:block;width:100%;height:auto}
+.colchart .col{cursor:pointer}
+.colchart .col:hover .hit{fill:rgba(255,255,255,.05)}
+.colchart .legenda2{flex-wrap:wrap;gap:8px 12px;padding:0 4px 8px;font-size:11px}
+.tabhist{font-size:11px;color:var(--ink2);margin:0 0 14px}
+.tabhist summary{cursor:pointer;color:var(--ink3);padding:4px 2px}
+.tabhist .scroll{overflow-x:auto}
+.tabhist table{border-collapse:collapse;width:100%;font-variant-numeric:tabular-nums}
+.tabhist th,.tabhist td{padding:4px 6px;text-align:right;border-bottom:1px solid var(--line);white-space:nowrap}
+.tabhist th:first-child,.tabhist td:first-child{text-align:left}
+.tabhist tr.tot td{color:var(--ink);font-weight:600}
 .card.full{grid-column:1/-1}
 .card.abre{position:relative}
 .card.abre::after{content:"\203a";position:absolute;right:14px;top:14px;color:var(--ink3);font-size:20px;line-height:1}
@@ -577,7 +595,7 @@ select.inp{appearance:none;background-image:linear-gradient(45deg,transparent 50
    A chave abaixo e publica de proposito: ela sozinha nao le nada.
    Quem decide o que cada pessoa enxerga e o proprio banco (RLS).
    ============================================================ */
-const VERSAO = "49";
+const VERSAO = "50";
 const SB  = "https://oihyhyyhessqnpkknhsi.supabase.co";
 const KEY = "sb_publishable_T7LERNVYS8mAK0tOlWfl5A_4-yCUjie";
 const LS_SESS = "nf.sessao", LS_FILA = "nf.fila", LS_CASAL = "nf.casal", LS_REJ = "nf.recusados", LS_FRENTE = "nf.frenteLanc", LS_CONTA_PG = "nf.contaPagamento";
@@ -785,7 +803,7 @@ function janelaInicio(){
 async function carregar(){
   const mes = mesRef();
   try{
-    const [membro,cat,contas,parcelas,saldos,eventos,pagos,cartoes,conferidas] = await Promise.all([
+    const [membro,cat,contas,parcelas,saldos,eventos,pagos,cartoes,conferidas,historico] = await Promise.all([
       rest("membro?select=user_id,nome,papel,casal_id"),
       rest("categoria?select=id,pai,filho,tipo,frentes,ativo,teto&ativo=is.true&order=pai.asc,filho.asc"),
       rest("conta_fixa?select=id,descricao,valor,dia,frente,cartao,periodicidade,mes_venc,varia,inicio,fim&ativo=is.true&order=dia.asc"),
@@ -794,12 +812,15 @@ async function carregar(){
       rest("evento?select=id,data,valor,tipo,frente,descricao,forma,cartao,categoria_id,origem,obs,criado_por,parcelas,parcela_num,grupo,criado_em,baixado_em,baixa_conta_id,baixa_receber_id&data=gte."+janelaInicio()+"&order=data.desc,criado_em.desc&limit=2000"),
       rest("pagamento_conta?select=conta_fixa_id,mes_ref,valor,pago_conta_id&mes_ref=eq."+mes),
       rest("cartao?select=id,nome,dia_venc,dia_fechamento,limite,frente,debito_auto,conta_debito_id&ativo=is.true&order=nome.asc"),
-      rest("fatura_conferida?select=id,cartao,mes_ref,valor_real,valor_app")
+      rest("fatura_conferida?select=id,cartao,mes_ref,valor_real,valor_app"),
+      /* historico mensal importado do extrato, anterior ao app; se a tabela
+         falhar, o app segue sem ele */
+      rest("receita_historico?select=frente,mes,tipo,canal,valor,bruto,vale&order=mes.asc").catch(()=>[])
     ]);
     const meuId = sessao && sessao.user ? sessao.user.id : null;
     eu = (membro||[]).find(m=>m.user_id===meuId) || (membro && membro[0]) || {nome:"",papel:"parceiro"};
     if(eu.casal_id){ casalCache = eu.casal_id; try{ localStorage.setItem(LS_CASAL,eu.casal_id); }catch(e){} }
-    dados={mesCarga:mes,cat,contas,parcelas,saldos,eventos,pagos,cartoes,conferidas:conferidas||[],membros:membro||[],cartoesLista:cartoes.map(c=>c.nome)};
+    dados={mesCarga:mes,cat,contas,parcelas,saldos,eventos,pagos,cartoes,conferidas:conferidas||[],historico:historico||[],membros:membro||[],cartoesLista:cartoes.map(c=>c.nome)};
     ultimaCarga = Date.now();
     $("#btnSair").textContent = (eu.nome||"") + " · sair";
     montarLentes(); pintar();
@@ -1136,6 +1157,124 @@ function vendasDoMes(m){
    tras tem dado pela metade e uma leitura de saude ali enganaria. */
 const MES_ZERO = "2026-08-01";
 let saudeMes=null, entrouMes=null;
+/* ---------- entrou por canal: historico + lancamentos ----------
+   Antes de agosto/26 o app nao tinha lancamento; o que existe e o resumo
+   mensal tirado do extrato bancario (tabela receita_historico). A partir
+   de agosto vale o lancamento, que tem item por item. */
+const GRUPOS_ENTROU=[["99Food","#3987e5"],["Keeta","#d95926"],["iFood","#199e70"],
+                     ["Pluxee","#c98500"],["Venda direta","#d55181"],["Outros","#008300"]];
+function grupoDoCanal(nome){
+  const n=String(nome||"").toLowerCase();
+  if(n.startsWith("99food")) return "99Food";
+  if(n.startsWith("keeta")) return "Keeta";
+  if(n==="ifood") return "iFood";
+  if(n.startsWith("pluxee")) return "Pluxee";
+  if(/encomenda|delivery|balc|maquininha/.test(n)) return "Venda direta";
+  return "Outros";
+}
+function histCaixaDoMes(m){
+  return (dados.historico||[]).filter(h=>h.tipo==="caixa" && h.mes===m && (lente==="tudo"||h.frente===lente));
+}
+function mesesEntrou(){
+  const s=new Set(mesesComDado(mesRef()));
+  (dados.historico||[]).forEach(h=>{ if(h.tipo==="caixa" && (lente==="tudo"||h.frente===lente) && h.mes<=mesRef()) s.add(h.mes); });
+  return [...s].sort();
+}
+/* soma por grupo do que ja caiu no mes (so o passado, nunca o agendado) */
+function entrouPorGrupo(m){
+  const o={}; GRUPOS_ENTROU.forEach(([g])=>o[g]=0);
+  const hist=histCaixaDoMes(m);
+  if(m<MES_ZERO && hist.length){ hist.forEach(h=>{ o[grupoDoCanal(h.canal)]+= +h.valor; }); return o; }
+  const fim=mesSeguinte(m), hj=hojeISO();
+  filtra(dados.eventos).filter(e=>contaComoEntrada(e) && e.data>=m && e.data<fim && e.data<=hj).forEach(e=>{
+    const c=dados.cat.find(x=>x.id===e.categoria_id);
+    o[grupoDoCanal(c?c.pai:"")] += +e.valor;
+  });
+  return o;
+}
+/* KPIs e grafico da confeitaria, no topo da folha "Entrou" */
+function painelEntrou(mSel){
+  if(lente!=="confeitaria") return "";
+  const meses=mesesEntrou(); if(meses.length<2) return "";
+  const hojeM=mesRef();
+  const porMes=meses.map(m=>{ const g=entrouPorGrupo(m); const t=Object.values(g).reduce((a,v)=>a+v,0); return {m,g,t}; });
+  const fechados=porMes.filter(x=>x.m<hojeM), ult3=fechados.slice(-3);
+  const soma=(a,f)=>a.reduce((x,y)=>x+f(y),0);
+  const media3= ult3.length ? soma(ult3,x=>x.t)/ult3.length : 0;
+  const atual=porMes.find(x=>x.m===hojeM), ant=porMes.find(x=>x.m===mesAnterior(hojeM));
+  const tot3=soma(ult3,x=>x.t), apps3=soma(ult3,x=>x.g["99Food"]+x.g.Keeta+x.g.iFood);
+  const app=(dados.historico||[]).filter(h=>h.tipo==="app" && (lente==="tudo"||h.frente===lente) && ult3.some(u=>u.m===h.mes));
+  const bruto=soma(app,h=>+h.bruto||0), chega=soma(app,h=>(+h.valor||0)+(+h.vale||0));
+  const k=(l,v,d)=>'<div class="kpi"><div class="l">'+l+'</div><div class="v">'+v+'</div>'+(d?'<div class="d">'+d+'</div>':'')+'</div>';
+  const pctTxt=v=>Math.round(v)+"%";
+  let dAt="";
+  if(atual && ant && ant.t>0){ const r=atual.t/ant.t*100;
+    dAt='<b style="color:'+(r>=100?'var(--good)':'var(--ink2)')+'">'+pctTxt(r)+'</b> de '+nomeMes(ant.m)+' inteiro'; }
+  let html='<div class="kpis">'
+    + k("Média por mês, últimos 3 meses", brl0(media3), ult3.length? nomeMes(ult3[0].m)+" a "+nomeMes(ult3[ult3.length-1].m) : "")
+    + k("Este mês, até hoje", brl0(atual?atual.t:0), dAt)
+    + k("Vem dos apps", tot3>0? pctTxt(apps3/tot3*100):"–", "99Food, Keeta e iFood, últimos 3 meses")
+    + k("Fica com os apps", bruto>0? pctTxt((1-chega/bruto)*100):"–", "do que é vendido neles: taxa, promoção e frete")
+    + '</div>';
+
+  /* colunas empilhadas, uma por mes */
+  const W=340,H=178,L=34,R=4,T=16,B=20, ph=H-T-B, pw=W-L-R;
+  const maxT=Math.max(1,...porMes.map(x=>x.t));
+  const passo=maxT>40000?20000:maxT>20000?10000:5000, topo=Math.ceil(maxT/passo)*passo;
+  const y=v=>T+ph-(v/topo)*ph;
+  const band=pw/porMes.length, bw=Math.min(24,band*0.62);
+  const kfmt=v=>v>=1000?(v/1000).toLocaleString("pt-BR",{maximumFractionDigits:1})+" mil":Math.round(v).toString();
+  let g='';
+  for(let v=0; v<=topo; v+=passo){
+    g+='<line x1="'+L+'" x2="'+(W-R)+'" y1="'+y(v).toFixed(1)+'" y2="'+y(v).toFixed(1)+'" stroke="var(--line)" stroke-width="1"/>'
+      +'<text x="'+(L-5)+'" y="'+(y(v)+3.5).toFixed(1)+'" text-anchor="end" font-size="9" fill="var(--ink3)">'+(v?kfmt(v):"0")+'</text>';
+  }
+  const maior=porMes.reduce((a,x)=>x.t>a.t?x:a,porMes[0]);
+  porMes.forEach((x,i)=>{
+    const cx=L+band*i+band/2, x0=cx-bw/2;
+    let base=y(0), segs='';
+    const ativos=GRUPOS_ENTROU.filter(([gname])=>x.g[gname]>0.5);
+    ativos.forEach(([gname,cor],j)=>{
+      const h=(x.g[gname]/topo)*ph; if(h<0.5) return;
+      const topoSeg=base-h, ultimo=j===ativos.length-1;
+      const alt=Math.max(0.5,h-(ultimo?0:2));        /* 2px de fundo entre os blocos */
+      const yy=topoSeg+(ultimo?0:2);
+      if(ultimo && alt>4){
+        const r=4;
+        segs+='<path d="M'+x0.toFixed(1)+','+(yy+alt).toFixed(1)+' V'+(yy+r).toFixed(1)+' Q'+x0.toFixed(1)+','+yy.toFixed(1)+' '+(x0+r).toFixed(1)+','+yy.toFixed(1)
+          +' H'+(x0+bw-r).toFixed(1)+' Q'+(x0+bw).toFixed(1)+','+yy.toFixed(1)+' '+(x0+bw).toFixed(1)+','+(yy+r).toFixed(1)+' V'+(yy+alt).toFixed(1)+' Z" fill="'+cor+'"/>';
+      }else{
+        segs+='<rect x="'+x0.toFixed(1)+'" y="'+yy.toFixed(1)+'" width="'+bw.toFixed(1)+'" height="'+alt.toFixed(1)+'" fill="'+cor+'"/>';
+      }
+      base=topoSeg;
+    });
+    const sel=x.m===mSel, parcial=x.m===hojeM;
+    const dica=nomeMes(x.m)+(parcial?" (até hoje)":"")+": "+brl0(x.t)+"\n"
+      + GRUPOS_ENTROU.filter(([gn])=>x.g[gn]>0.5).map(([gn])=>gn+" "+brl0(x.g[gn])).join("\n");
+    const rot=(sel||x===maior) ? '<text x="'+cx.toFixed(1)+'" y="'+(y(x.t)-4).toFixed(1)+'" text-anchor="middle" font-size="9" fill="var(--ink2)">'+kfmt(x.t)+'</text>' : '';
+    g+='<g class="col" data-cm="'+x.m+'"><title>'+dica+'</title>'
+      +'<rect class="hit" x="'+(L+band*i).toFixed(1)+'" y="'+T+'" width="'+band.toFixed(1)+'" height="'+(ph+B)+'" fill="transparent" rx="6"/>'
+      +'<g opacity="'+(parcial?0.6:1)+'">'+segs+'</g>'+rot
+      +'<text x="'+cx.toFixed(1)+'" y="'+(H-6)+'" text-anchor="middle" font-size="9.5" fill="'+(sel?'var(--ink)':'var(--ink3)')+'"'+(sel?' font-weight="700"':'')+'>'+nomeMes(x.m).slice(0,3)+'</text></g>';
+  });
+  html+='<div class="colchart"><div class="legenda2">'
+    + GRUPOS_ENTROU.map(([gn,cor])=>'<span><i style="background:'+cor+'"></i>'+gn+'</span>').join("")
+    + '</div><svg viewBox="0 0 '+W+' '+H+'" role="img" aria-label="Entrou por mês, por canal">'+g+'</svg></div>'
+    + '<div class="nota" style="margin:0 2px 8px;font-size:11px;color:var(--ink3)">Toque numa coluna para abrir o mês. '
+    + 'Até julho, o valor vem do extrato do banco; de agosto em diante, dos lançamentos. O mês corrente aparece mais claro porque ainda não fechou.</div>';
+
+  /* a mesma informacao em tabela */
+  html+='<details class="tabhist"><summary>Ver em tabela</summary><div class="scroll"><table><tr><th>Mês</th>'
+    + GRUPOS_ENTROU.map(([gn])=>'<th>'+gn+'</th>').join("")+'<th>Total</th></tr>'
+    + porMes.map(x=>'<tr><td>'+nomeMes(x.m)+'</td>'+GRUPOS_ENTROU.map(([gn])=>'<td>'+(x.g[gn]>0.5?brl0(x.g[gn]).replace("R$ ",""):"–")+'</td>').join("")
+        +'<td>'+brl0(x.t).replace("R$ ","")+'</td></tr>').join("")
+    + '<tr class="tot"><td>Total</td>'+GRUPOS_ENTROU.map(([gn])=>'<td>'+brl0(soma(porMes,x=>x.g[gn])).replace("R$ ","")+'</td>').join("")
+    + '<td>'+brl0(soma(porMes,x=>x.t)).replace("R$ ","")+'</td></tr></table></div></details>';
+  return html;
+}
+function ligarPainelEntrou(){
+  $("#slConteudo").querySelectorAll("[data-cm]").forEach(el=>el.onclick=()=>{ entrouMes=el.dataset.cm; abrirLista("entrou"); });
+}
 function mesesComDado(ate){
   const out=[]; let m=MES_ZERO;
   while(m<=ate){ out.push(m); m=mesSeguinte(m); }
@@ -2043,10 +2182,38 @@ function abrirLista(qual){
      "Entrou 25 mil" sem abrir nao responde a pergunta que importa: de qual
      app, de qual cliente, em qual conta. Aqui o numero se abre por origem. */
   if(qual==="entrou"){
-    const meses=mesesComDado(mesRef());
-    if(!entrouMes || entrouMes<MES_ZERO || entrouMes>mesRef()) entrouMes=mesRef();
+    const meses=mesesEntrou();
+    if(!entrouMes || !meses.includes(entrouMes)) entrouMes=mesRef();
     const m=entrouMes, fimM=mesSeguinte(m), hj=hojeISO();
     const nomeF = lente==="tudo" ? "" : " "+(lente==="casa"?"no casal":lente==="consultorio"?"no consultório":"na confeitaria");
+    const chipsMeses = meses.length>1
+      ? '<div class="chips" id="entrouMeses" style="margin:0 0 14px">'
+        + meses.slice(-12).map(x=>'<button class="chip'+(x===m?" on":"")+'" data-em="'+x+'">'
+            + (x===mesRef()? "este mês" : nomeMes(x))+'</button>').join("") + '</div>'
+      : '';
+    /* mes anterior ao app: so o resumo do extrato, sem item por item */
+    const histM = histCaixaDoMes(m);
+    if(m<MES_ZERO && histM.length){
+      const tot=histM.reduce((a,h)=>a+ +h.valor,0);
+      const porCanal={}; histM.forEach(h=>porCanal[h.canal]=(porCanal[h.canal]||0)+ +h.valor);
+      const ord=Object.keys(porCanal).sort((a,b)=>porCanal[b]-porCanal[a]);
+      $("#slTitulo").textContent="Entrou"+nomeF+" em "+nomeMes(m);
+      $("#slNota").innerHTML="Em "+nomeMes(m)+" caiu na conta <b style='color:var(--good)'>"+brl(tot)+"</b>. "
+        + "Este mês é anterior ao app: o valor vem do extrato do banco, conferido canal por canal, sem o item por item.";
+      $("#slAdd").textContent=""; $("#slAdd").onclick=null;
+      $("#slConteudo").innerHTML = chipsMeses + painelEntrou(m)
+        + '<div class="sechead" style="margin:4px 0 8px"><h2 class="sec">De onde veio</h2>'
+        + '<span class="add" style="color:var(--ink3)">'+brl(tot)+'</span></div><div class="list">'
+        + ord.map(c=>'<div class="row"><div class="mid"><div class="t">'+(c==="Delivery proprio"?"Delivery próprio (Yooga)":c)+'</div>'
+            + '<div class="s">'+grupoDoCanal(c)+' · '+(tot>0?(porCanal[c]/tot*100).toFixed(0)+"%":"")+' do total</div></div>'
+            + '<div class="amt in">'+brl(porCanal[c])+'</div></div>').join("")
+        + '</div>';
+      const bx=$("#entrouMeses");
+      if(bx) bx.querySelectorAll("[data-em]").forEach(b=>b.onclick=()=>{ entrouMes=b.dataset.em; abrirLista("entrou"); });
+      ligarPainelEntrou();
+      abrirSheet("#sheetLista");
+      return;
+    }
     const doMes=filtra(dados.eventos).filter(e=>e.tipo==="entrada" && e.forma!=="cartao" && e.data>=m && e.data<fimM);
     const transf = doMes.filter(e=>lente==="tudo" && ehTransfInterna(e));
     const valem = doMes.filter(e=>!transf.includes(e));
@@ -2077,13 +2244,7 @@ function abrirLista(qual){
         + '<div class="s">'+quando+(onde?" · "+onde:"")+(lente==="tudo"?" · "+rotulo(e.frente):"")+'</div></div>'
         + '<div class="amt in">'+brl(e.valor)+'</div></div>';
     };
-    let html='';
-    if(meses.length>1){
-      html += '<div class="chips" id="entrouMeses" style="margin:0 0 14px">'
-        + meses.slice(-12).map(x=>'<button class="chip'+(x===m?" on":"")+'" data-em="'+x+'">'
-            + (x===mesRef()? "este mês" : nomeMes(x))+'</button>').join("")
-        + '</div>';
-    }
+    let html=chipsMeses + painelEntrou(m);
     if(ordem.length){
       html += '<div class="sechead" style="margin:4px 0 8px"><h2 class="sec">De onde veio</h2>'
         + '<span class="add" style="color:var(--ink3)">'+brl(total)+'</span></div><div class="list">'
@@ -2112,6 +2273,7 @@ function abrirLista(qual){
     $("#slConteudo").innerHTML = html || '<div class="empty">Nada entrou em '+nomeMes(m)+' nesta lente.</div>';
     const box=$("#entrouMeses");
     if(box) box.querySelectorAll("[data-em]").forEach(b=>b.onclick=()=>{ entrouMes=b.dataset.em; abrirLista("entrou"); });
+    ligarPainelEntrou();
     $("#slConteudo").querySelectorAll("[data-grp]").forEach(el=>el.onclick=()=>{
       const alvo=document.getElementById("grp"+el.dataset.grp); if(alvo) alvo.scrollIntoView({behavior:"smooth",block:"start"});
     });

@@ -413,6 +413,11 @@ select.inp{appearance:none;background-image:linear-gradient(45deg,transparent 50
       <div class="lbl">Em qual mês cobra</div>
       <select class="inp" id="ctMes"></select>
     </div>
+    <div id="ctAncoraBox" class="hide">
+      <div class="lbl">Data do primeiro pagamento</div>
+      <input class="inp" id="ctAncora" type="date">
+      <div class="s" style="color:var(--ink3);margin-top:6px">Depois dela o app repete a cada 14 dias, no mesmo dia da semana. O valor acima é o de cada pagamento.</div>
+    </div>
     <div class="two" style="margin-top:14px">
       <div><div class="lbl" style="margin-top:0">Começa em</div><input class="inp" id="ctInicio" type="month"></div>
       <div><div class="lbl" style="margin-top:0">Termina em</div><input class="inp" id="ctFim" type="month"></div>
@@ -595,7 +600,7 @@ select.inp{appearance:none;background-image:linear-gradient(45deg,transparent 50
    A chave abaixo e publica de proposito: ela sozinha nao le nada.
    Quem decide o que cada pessoa enxerga e o proprio banco (RLS).
    ============================================================ */
-const VERSAO = "54";
+const VERSAO = "55";
 const SB  = "https://oihyhyyhessqnpkknhsi.supabase.co";
 const KEY = "sb_publishable_T7LERNVYS8mAK0tOlWfl5A_4-yCUjie";
 const LS_SESS = "nf.sessao", LS_FILA = "nf.fila", LS_CASAL = "nf.casal", LS_REJ = "nf.recusados", LS_FRENTE = "nf.frenteLanc", LS_CONTA_PG = "nf.contaPagamento";
@@ -815,7 +820,7 @@ async function carregar(){
       rest("parcela_futura?select=id,cartao,mes_ref,valor,frente,pago,pago_em,valor_pago,pago_conta_id,antecipado&order=mes_ref.asc"),
       rest("conta_saldo?select=id,nome,frente,tipo,valor,atualizado_em,conferido_em&order=valor.desc"),
       rest("evento?select=id,data,valor,tipo,frente,descricao,forma,cartao,categoria_id,origem,obs,criado_por,parcelas,parcela_num,grupo,criado_em,baixado_em,baixa_conta_id,baixa_receber_id&data=gte."+janelaInicio()+"&order=data.desc,criado_em.desc&limit=2000"),
-      rest("pagamento_conta?select=conta_fixa_id,mes_ref,valor,pago_conta_id&mes_ref=eq."+mes),
+      rest("pagamento_conta?select=conta_fixa_id,mes_ref,valor,pago_conta_id&mes_ref=gte."+mes+"&mes_ref=lt."+mesSeguinte(mes)),
       rest("cartao?select=id,nome,dia_venc,dia_fechamento,limite,frente,debito_auto,conta_debito_id&ativo=is.true&order=nome.asc"),
       rest("fatura_conferida?select=id,cartao,mes_ref,valor_real,valor_app"),
       /* historico mensal importado do extrato, anterior ao app; se a tabela
@@ -825,7 +830,8 @@ async function carregar(){
     const meuId = sessao && sessao.user ? sessao.user.id : null;
     eu = (membro||[]).find(m=>m.user_id===meuId) || (membro && membro[0]) || {nome:"",papel:"parceiro"};
     if(eu.casal_id){ casalCache = eu.casal_id; try{ localStorage.setItem(LS_CASAL,eu.casal_id); }catch(e){} }
-    dados={mesCarga:mes,cat,contas,parcelas,saldos,eventos,pagos,cartoes,conferidas:conferidas||[],historico:historico||[],membros:membro||[],cartoesLista:cartoes.map(c=>c.nome)};
+    const qz=expandirQuinzenais(contas||[], pagos||[]);
+    dados={mesCarga:mes,cat,contas:qz.contas,contasBase:qz.base,parcelas,saldos,eventos,pagos,cartoes,conferidas:conferidas||[],historico:historico||[],membros:membro||[],cartoesLista:cartoes.map(c=>c.nome)};
     ultimaCarga = Date.now();
     $("#btnSair").textContent = (eu.nome||"") + " · sair";
     montarLentes(); pintar();
@@ -902,6 +908,42 @@ function contaPadrao(frente, uso, valor){
   return doGrupo[0] || doCasal[0] || maior;
 }
 function nomeCurto(s){ return s ? String(s.nome).split(" (")[0] : ""; }
+/* ---------- conta a cada 14 dias (ex.: funcionaria paga quinta sim, quinta nao) ----------
+   O banco guarda uma linha so, com a data do primeiro pagamento em "inicio".
+   Ao carregar, ela vira uma conta por data, cada uma valendo so no seu mes, e
+   o pagamento de cada data fica em pagamento_conta com mes_ref = a propria data.
+   Assim mes com tres quintas mostra tres pagamentos, e o resto do app nao muda. */
+function idOcorr(base, iso){ return -(base*1000000 + (+iso.slice(2,4))*10000 + (+iso.slice(5,7))*100 + (+iso.slice(8,10))); }
+function expandirQuinzenais(contas, pagos){
+  const base=[], out=[];
+  let fimJanela=mesRef(); for(let i=0;i<13;i++) fimJanela=mesSeguinte(fimJanela);
+  contas.forEach(c=>{
+    if(c.periodicidade!=="quinzenal" || !c.inicio){ out.push(c); return; }
+    base.push(c);
+    const d=new Date(String(c.inicio).slice(0,10)+"T12:00:00");
+    const fimC = c.fim ? mesSeguinte(String(c.fim).slice(0,7)+"-01") : null;
+    for(let k=0;k<400;k++){
+      const iso=d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0");
+      const m=iso.slice(0,7)+"-01";
+      if(iso>=fimJanela || (fimC && iso>=fimC)) break;
+      if(m>=MES_ZERO) out.push(Object.assign({}, c, {id:idOcorr(c.id,iso), _base:c.id, _occ:iso,
+        periodicidade:"mensal", dia:+iso.slice(8,10), inicio:m, fim:m,
+        descricao:c.descricao+" · "+iso.slice(8,10)+"/"+iso.slice(5,7)}));
+      d.setDate(d.getDate()+14);
+    }
+  });
+  pagos.forEach(p=>{
+    const b=base.find(c=>c.id===p.conta_fixa_id);
+    if(b) p.conta_fixa_id = idOcorr(b.id, String(p.mes_ref).slice(0,10));
+  });
+  out.sort((a,b)=>a.dia-b.dia);
+  return {contas:out, base};
+}
+/* onde gravar o pagamento: conta comum usa o mes; a de 14 dias usa a data */
+function refPg(id, mes){
+  const c=(dados.contas||[]).find(x=>x.id===id);
+  return (c && c._occ) ? {cid:c._base, mref:c._occ} : {cid:id, mref:mes};
+}
 /* ---------- conta dividida entre duas frentes (ex.: atelie) ----------
    No banco sao duas linhas, uma por frente, para cada negocio enxergar o seu
    custo e o seu caixa. Na tela e no pagamento elas andam juntas: uma conta,
@@ -2772,7 +2814,7 @@ function abrirLista(qual){
 
   /* ---------- custo fixo: tudo que se repete ---------- */
   if(qual==="fixos"){
-    const contas=filtra(dados.contas);
+    const contas=filtra(dados.contas).filter(c=>!c._occ || vigente(c,mes));
     const faturaPaga={}; cartoesVisiveis().forEach(cd=>{ faturaPaga[cd.nome]=fatura(cd.nome,mes).pago; });
     const estado=(c)=>{
       if(!cobraNesteMes(c,mes)) return {k:"nao",icone:"–",txt:"não cobra em "+nomeMes(mes),cor:"var(--ink3)"};
@@ -3442,7 +3484,7 @@ async function marcarPar(id, el){
 }
 async function marcarConta(id,el){
   if(parDe(dados.contas.find(c=>c.id===id))) return marcarPar(id, el);
-  const mes=mesRef(), jaPago=el.classList.contains("on");
+  const mes=mesRef(), jaPago=el.classList.contains("on"), rp=refPg(id, mes);
   const conta=dados.contas.find(c=>c.id===id);
   el.classList.toggle("on");
   try{
@@ -3450,16 +3492,16 @@ async function marcarConta(id,el){
       const pg=dados.pagos.find(p=>p.conta_fixa_id===id);
       const devolve = pg && pg.valor!=null ? +pg.valor : +conta.valor;
       if(pg && pg.pago_conta_id) await moverSaldo(pg.pago_conta_id, +devolve);
-      await rest("pagamento_conta?conta_fixa_id=eq."+id+"&mes_ref=eq."+mes,{method:"DELETE",headers:{Prefer:"return=minimal"}});
+      await rest("pagamento_conta?conta_fixa_id=eq."+rp.cid+"&mes_ref=eq."+rp.mref,{method:"DELETE",headers:{Prefer:"return=minimal"}});
       dados.pagos=dados.pagos.filter(p=>p.conta_fixa_id!==id);
     }else{
       const casal=await meuCasal();
       const valor=+(+conta.valor).toFixed(2);
       const caixa=contaPadrao(conta.frente, "pagar", valor);
       await rest("pagamento_conta",{method:"POST",headers:{Prefer:"return=minimal"},
-        body:JSON.stringify({casal_id:casal,conta_fixa_id:id,mes_ref:mes,valor:valor,
+        body:JSON.stringify({casal_id:casal,conta_fixa_id:rp.cid,mes_ref:rp.mref,valor:valor,
                              pago_conta_id: caixa?caixa.id:null})});
-      dados.pagos.push({conta_fixa_id:id,mes_ref:mes,valor:valor,pago_conta_id:caixa?caixa.id:null});
+      dados.pagos.push({conta_fixa_id:id,mes_ref:rp.mref,valor:valor,pago_conta_id:caixa?caixa.id:null});
       if(caixa && valor>0) await moverSaldo(caixa.id, -valor);
       if(conta.varia){
         toast("Marquei como paga. Confere o valor do mês.");
@@ -3617,7 +3659,8 @@ $("#pgSalvar").onclick=async()=>{
       const pg=dados.pagos.find(x=>x.conta_fixa_id===pagoEd.id);
       if(!pg){ $("#pgMsg").innerHTML='<div class="msg err">Marque a conta como paga primeiro.</div>'; return; }
       if(pg.pago_conta_id && pagoEd.jaDebitado) await moverSaldo(pg.pago_conta_id, +pagoEd.jaDebitado);
-      await rest("pagamento_conta?conta_fixa_id=eq."+pagoEd.id+"&mes_ref=eq."+mes,
+      const rpe=refPg(pagoEd.id, mes);
+      await rest("pagamento_conta?conta_fixa_id=eq."+rpe.cid+"&mes_ref=eq."+rpe.mref,
         {method:"PATCH",headers:{Prefer:"return=minimal"},
          body:JSON.stringify({valor:v, pago_conta_id:pagoEd.contaId})});
       if(pg){ pg.valor=v; pg.pago_conta_id=pagoEd.contaId; }
@@ -3969,9 +4012,11 @@ async function marcarFixaDoLancamento(id, valorReal){
       if(!dados.pagos.some(p=>p.conta_fixa_id===pr.id))
         corpo.push({casal_id:casal, conta_fixa_id:pr.id, mes_ref:mes, valor:+(valorReal-v0).toFixed(2)});
       await rest("pagamento_conta",{method:"POST",headers:{Prefer:"return=minimal"},body:JSON.stringify(corpo)});
-    }else
+    }else{
+    const rpl=refPg(id, mes);
     await rest("pagamento_conta",{method:"POST",headers:{Prefer:"return=minimal"},
-      body:JSON.stringify({casal_id:casal, conta_fixa_id:id, mes_ref:mes, valor:+valorReal.toFixed(2)})});
+      body:JSON.stringify({casal_id:casal, conta_fixa_id:rpl.cid, mes_ref:rpl.mref, valor:+valorReal.toFixed(2)})});
+    }
     fecharSheet("#sheet");
     toast("Conta fixa marcada como paga. Não lancei nada, para não contar duas vezes.");
     await carregar();
@@ -4180,7 +4225,8 @@ $("#cSalvar").onclick = async ()=>{
 /* ---------------- conta fixa ---------------- */
 const MESES=["janeiro","fevereiro","março","abril","maio","junho","julho","agosto","setembro","outubro","novembro","dezembro"];
 function abrirConta(id){
-  const c = id ? dados.contas.find(x=>x.id===id) : null;
+  const oc = id ? dados.contas.find(x=>x.id===id) : null;
+  const c = (oc && oc._occ) ? ((dados.contasBase||[]).find(x=>x.id===oc._base) || null) : oc;
   contaEd={id:c?c.id:null, frente:c?c.frente:(lente==="tudo"?"casa":lente),
            cartao:c?(c.cartao||null):null, periodicidade:c?(c.periodicidade||"mensal"):"mensal"};
   $("#ctTitulo").textContent = c ? "Editar conta fixa" : "Nova conta fixa";
@@ -4190,6 +4236,8 @@ function abrirConta(id){
   $("#ctMes").value = c && c.mes_venc ? c.mes_venc : String(new Date().getMonth()+1);
   $("#ctInicio").value = c && c.inicio ? String(c.inicio).slice(0,7) : "";
   $("#ctFim").value    = c && c.fim    ? String(c.fim).slice(0,7)    : "";
+  $("#ctAncora").value = c && c.periodicidade==="quinzenal" && c.inicio ? String(c.inicio).slice(0,10) : "";
+  if(c && c.periodicidade==="quinzenal") $("#ctInicio").value="";
   $("#ctExcluir").classList.toggle("hide", !c);
   const pc=parDe(c);
   contaEd.par = pc ? pc.id : null;
@@ -4208,14 +4256,17 @@ function pintarCtPago(){
   $("#ctPagoPor").querySelectorAll("[data-p]").forEach(b=>b.onclick=()=>{ contaEd.cartao=b.dataset.p||null; pintarCtPago(); });
 }
 function pintarCtPeriodo(){
-  $("#ctPeriodo").innerHTML = [{id:"mensal",nome:"Todo mês"},{id:"anual",nome:"Uma vez por ano"}]
+  $("#ctPeriodo").innerHTML = [{id:"mensal",nome:"Todo mês"},{id:"quinzenal",nome:"A cada 14 dias"},{id:"anual",nome:"Uma vez por ano"}]
     .map(o=>'<button class="chip'+(contaEd.periodicidade===o.id?" on":"")+'" data-pe="'+o.id+'">'+o.nome+'</button>').join("");
   $("#ctPeriodo").querySelectorAll("[data-pe]").forEach(b=>b.onclick=()=>{ contaEd.periodicidade=b.dataset.pe; pintarCtPeriodo(); });
   $("#ctMesBox").classList.toggle("hide", contaEd.periodicidade!=="anual");
+  $("#ctAncoraBox").classList.toggle("hide", contaEd.periodicidade!=="quinzenal");
 }
 $("#ctCancelar").onclick=()=>fecharSheet("#sheetConta");
 $("#ctSalvar").onclick = async ()=>{
-  const desc=$("#ctDesc").value.trim(), valor=parseNum($("#ctValor").value), dia=parseInt($("#ctDia").value,10);
+  const desc=$("#ctDesc").value.trim(), valor=parseNum($("#ctValor").value), ancora=$("#ctAncora").value;
+  if(contaEd.periodicidade==="quinzenal" && !ancora){ $("#ctMsg").innerHTML='<div class="msg err">Escolha a data do primeiro pagamento.</div>'; return; }
+  const dia = contaEd.periodicidade==="quinzenal" ? +ancora.slice(8,10) : parseInt($("#ctDia").value,10);
   if(!desc){ $("#ctMsg").innerHTML='<div class="msg err">Dê um nome para a conta.</div>'; return; }
   if(!(valor>=0)){ $("#ctMsg").innerHTML='<div class="msg err">Valor inválido.</div>'; return; }
   if(!(dia>=1&&dia<=31)){ $("#ctMsg").innerHTML='<div class="msg err">O dia precisa ser de 1 a 31.</div>'; return; }
@@ -4224,7 +4275,7 @@ $("#ctSalvar").onclick = async ()=>{
   const corpo={descricao:desc,valor:+valor.toFixed(2),dia,frente:contaEd.frente,
                cartao:contaEd.cartao||null, periodicidade:contaEd.periodicidade,
                mes_venc: contaEd.periodicidade==="anual" ? +$("#ctMes").value : null,
-               inicio: ini ? ini+"-01" : null, fim: fi ? fi+"-01" : null};
+               inicio: contaEd.periodicidade==="quinzenal" ? ancora : (ini ? ini+"-01" : null), fim: fi ? fi+"-01" : null};
   try{
     if(contaEd.id){
       await rest("conta_fixa?id=eq."+contaEd.id,{method:"PATCH",headers:{Prefer:"return=minimal"},body:JSON.stringify(corpo)});

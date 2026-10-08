@@ -595,7 +595,7 @@ select.inp{appearance:none;background-image:linear-gradient(45deg,transparent 50
    A chave abaixo e publica de proposito: ela sozinha nao le nada.
    Quem decide o que cada pessoa enxerga e o proprio banco (RLS).
    ============================================================ */
-const VERSAO = "53";
+const VERSAO = "54";
 const SB  = "https://oihyhyyhessqnpkknhsi.supabase.co";
 const KEY = "sb_publishable_T7LERNVYS8mAK0tOlWfl5A_4-yCUjie";
 const LS_SESS = "nf.sessao", LS_FILA = "nf.fila", LS_CASAL = "nf.casal", LS_REJ = "nf.recusados", LS_FRENTE = "nf.frenteLanc", LS_CONTA_PG = "nf.contaPagamento";
@@ -811,7 +811,7 @@ async function carregar(){
     const [membro,cat,contas,parcelas,saldos,eventos,pagos,cartoes,conferidas,historico] = await Promise.all([
       rest("membro?select=user_id,nome,papel,casal_id"),
       rest("categoria?select=id,pai,filho,tipo,frentes,ativo,teto&ativo=is.true&order=pai.asc,filho.asc"),
-      rest("conta_fixa?select=id,descricao,valor,dia,frente,cartao,periodicidade,mes_venc,varia,inicio,fim&ativo=is.true&order=dia.asc"),
+      rest("conta_fixa?select=id,descricao,valor,dia,frente,cartao,periodicidade,mes_venc,varia,inicio,fim,par_id&ativo=is.true&order=dia.asc"),
       rest("parcela_futura?select=id,cartao,mes_ref,valor,frente,pago,pago_em,valor_pago,pago_conta_id,antecipado&order=mes_ref.asc"),
       rest("conta_saldo?select=id,nome,frente,tipo,valor,atualizado_em,conferido_em&order=valor.desc"),
       rest("evento?select=id,data,valor,tipo,frente,descricao,forma,cartao,categoria_id,origem,obs,criado_por,parcelas,parcela_num,grupo,criado_em,baixado_em,baixa_conta_id,baixa_receber_id&data=gte."+janelaInicio()+"&order=data.desc,criado_em.desc&limit=2000"),
@@ -902,6 +902,44 @@ function contaPadrao(frente, uso, valor){
   return doGrupo[0] || doCasal[0] || maior;
 }
 function nomeCurto(s){ return s ? String(s.nome).split(" (")[0] : ""; }
+/* ---------- conta dividida entre duas frentes (ex.: atelie) ----------
+   No banco sao duas linhas, uma por frente, para cada negocio enxergar o seu
+   custo e o seu caixa. Na tela e no pagamento elas andam juntas: uma conta,
+   um toque, e cada metade sai da conta escolhida para ela. */
+function parDe(c){ return (c && c.par_id) ? ((dados.contas||[]).find(x=>x.id===c.par_id) || null) : null; }
+function nomeSemMetade(d){ return String(d||"").replace(/\s*\(metade\)\s*/i," ").trim(); }
+/* junta as metades que estao as duas na lista. Se so uma esta (lente de uma
+   frente so), ela fica sozinha e ganha a referencia da outra */
+function juntarPares(lista, pagosIds){
+  const ids=new Set(lista.map(c=>c.id)), out=[];
+  lista.forEach(c=>{
+    const p=parDe(c);
+    if(!p){ out.push(c); return; }
+    if(ids.has(p.id)){
+      if(p.id<c.id) return;
+      out.push(Object.assign({}, c, {_par:p, _junta:true, descricao:nomeSemMetade(c.descricao),
+        valor:+(+c.valor + +p.valor).toFixed(2),
+        _pago: pagosIds ? (pagosIds.has(c.id) && pagosIds.has(p.id)) : false}));
+    }else out.push(Object.assign({}, c, {_par:p}));
+  });
+  return out;
+}
+function rotuloPar(c){
+  return c._junta ? "dividida: "+rotulo(c.frente)+" e "+rotulo(c._par.frente)+", metade cada"
+                  : "metade de "+brl(+c.valor + +c._par.valor)+", paga junto com "+rotulo(c._par.frente);
+}
+/* o que saiu de verdade, somando as metades. null quando nenhuma esta paga */
+function pagoReal(id, parId){
+  let s=0, tem=false;
+  [id].concat(parId?[parId]:[]).forEach(x=>{
+    const pg=dados.pagos.find(p=>p.conta_fixa_id===x), c=dados.contas.find(k=>k.id===x);
+    if(pg){ tem=true; s += pg.valor!=null ? +pg.valor : +(c?c.valor:0); } else s += +(c?c.valor:0);
+  });
+  return tem ? +s.toFixed(2) : null;
+}
+function faltamContas(r){
+  return juntarPares(r.doBanco, r.pagosIds).filter(c=>!(c._junta ? c._pago : r.pagosIds.has(c.id))).length;
+}
 /* A soma acontece no banco, nao aqui. Ler o saldo, somar no aparelho e gravar
    perde uma das duas escritas quando os dois celulares mexem no mesmo segundo,
    e o dinheiro some sem deixar rastro. */
@@ -1714,7 +1752,7 @@ function pintar(){
   /* ---- o que passou e ninguem marcou. So aparece quando existe. ---- */
   const alertas=[];
   (function(){
-    const atrasadasFix = r.doBanco.filter(c=>!r.pagosIds.has(c.id) && c.dia < diaHoje);
+    const atrasadasFix = juntarPares(r.doBanco.filter(c=>!r.pagosIds.has(c.id) && c.dia < diaHoje));
     if(atrasadasFix.length){
       const soma=atrasadasFix.reduce((a,c)=>a+ +c.valor,0);
       alertas.push({p:"contas", t:atrasadasFix.length===1
@@ -1958,10 +1996,10 @@ function abrirCompromisso(m, ehAgora){
 
   if(ehAgora){
     /* mes corrente: so o que ainda falta pagar */
-    const naoPagas=r.doBanco.filter(c=>!r.pagosIds.has(c.id)).sort((a,b)=>a.dia-b.dia);
+    const naoPagas=juntarPares(r.doBanco.filter(c=>!r.pagosIds.has(c.id))).sort((a,b)=>a.dia-b.dia);
     const somaB=naoPagas.reduce((a,c)=>a+ +c.valor,0); total+=somaB;
     blocos.push(bloco("Contas do banco ainda em aberto",
-      naoPagas.map(c=>linha(c.descricao,"vence dia "+c.dia+" · "+rotulo(c.frente),+c.valor)), somaB, "var(--warn)"));
+      naoPagas.map(c=>linha(c.descricao,"vence dia "+c.dia+" · "+(c._par?rotuloPar(c):rotulo(c.frente)),+c.valor)), somaB, "var(--warn)"));
     const fat=[]; let somaF=0;
     cartoesVisiveis().forEach(c=>{
       const f=fatura(c.nome,m);
@@ -2415,7 +2453,7 @@ function abrirLista(qual){
       html += '<div class="sechead" style="margin:4px 0 8px"><h2 class="sec">'
         + (mes===mesRef()?"Este mês":nomeMes(mes))+', por dentro</h2></div><div class="list">'
         + linha("Entrou",(sd.previsto>0 ? brl(sd.entrou-sd.previsto)+" já caiu · "+brl(sd.previsto)+" ainda vai cair até o fim do mês" : "recebimentos e vendas lançados")+" · toque para abrir por origem",sd.entrou,"var(--good)",'data-go="entrou"')
-        + linha("Contas fixas e assinaturas",sd.itFixas.length+" itens · toque para ver",-sd.fixas,"var(--bad)",'data-ir="sdFixas"')
+        + linha("Contas fixas e assinaturas",juntarPares(sd.itFixas).length+" itens · toque para ver",-sd.fixas,"var(--bad)",'data-ir="sdFixas"')
         + linha("Gastos lançados",sd.itGastos.length+" lançamentos · toque para ver",-sd.lancado,"var(--bad)",'data-ir="sdGastos"')
         + linha("Sobra do mês","entrou menos o que o mês custou",sd.operacional, sd.operacional>=0?"var(--good)":"var(--bad)")
         + '</div>';
@@ -2470,10 +2508,10 @@ function abrirLista(qual){
       if(sd.itFixas.length){
         html += '<div class="sechead" id="sdFixas" style="margin:18px 0 8px"><h2 class="sec">Contas fixas e assinaturas de '+nomeMes(mes)+'</h2>'
           + '<span class="add" style="color:var(--ink3)">'+brl(sd.fixas)+'</span></div><div class="list">'
-          + sd.itFixas.slice().sort((a,b)=>b.valor-a.valor).map(c=>'<div class="row tap" data-cf="'+c.id+'"><div class="mid">'
+          + juntarPares(sd.itFixas).sort((a,b)=>b.valor-a.valor).map(c=>'<div class="row tap" data-cf="'+c.id+'"><div class="mid">'
               + '<div class="t">'+String(c.descricao||"").replace("Assinatura ","")+'</div>'
               + '<div class="s">'+(c.cartao?"no cartão "+c.cartao:"sai do banco")+(c.dia?" · dia "+c.dia:"")
-              + (lente==="tudo"?" · "+rotulo(c.frente):"")+(c.periodicidade==="anual"?" · anual":"")+'</div></div>'
+              + (c._par?" · "+rotuloPar(c):lente==="tudo"?" · "+rotulo(c.frente):"")+(c.periodicidade==="anual"?" · anual":"")+'</div></div>'
               + '<div class="amt">'+brl(c.valor)+'</div></div>').join("")
           + '</div>';
       }
@@ -2658,8 +2696,9 @@ function abrirLista(qual){
   /* ---------- contas do mes: pago e a pagar, junto ---------- */
   if(qual==="contas"){
     const itens=[];
-    r.doBanco.forEach(c=>itens.push({k:"c",id:c.id,nome:c.descricao,dia:c.dia,
-      valor:+c.valor,pago:r.pagosIds.has(c.id),frente:c.frente,detalhe:rotulo(c.frente)}));
+    juntarPares(r.doBanco, r.pagosIds).forEach(c=>itens.push({k:"c",id:c.id,nome:c.descricao,dia:c.dia,
+      valor:+c.valor,pago:c._junta?c._pago:r.pagosIds.has(c.id),frente:c.frente,
+      detalhe:c._par?rotuloPar(c):rotulo(c.frente), par:c._junta?c._par.id:null}));
     cartoesVisiveis().forEach(cd=>{
       const f=fatura(cd.nome,mes);
       if(f.total>0 || f.parcelaId) itens.push({k:"f",id:f.parcelaId,cartao:cd.nome,mes:mes,nome:"Fatura "+cd.nome,
@@ -2672,9 +2711,9 @@ function abrirLista(qual){
     const pagos=itens.filter(i=>i.pago).sort((a,b)=>a.dia-b.dia);
     /* o "ja pago" soma o que saiu da conta, nao o que estava previsto */
     const realDe=(i)=>{
-      const pg = i.k==="c" ? dados.pagos.find(x=>x.conta_fixa_id===i.id)
-                           : dados.parcelas.find(x=>x.cartao===i.cartao && x.mes_ref===i.mes);
-      const v = i.k==="c" ? (pg?pg.valor:null) : (pg?pg.valor_pago:null);
+      if(i.k==="c"){ const v=pagoReal(i.id, i.par); return v!=null ? v : i.valor; }
+      const pg = dados.parcelas.find(x=>x.cartao===i.cartao && x.mes_ref===i.mes);
+      const v = pg?pg.valor_pago:null;
       return v!=null ? +v : i.valor;
     };
     const somaFalta=falta.reduce((a,i)=>a+i.valor,0), somaPago=pagos.reduce((a,i)=>a+realDe(i),0);
@@ -2693,7 +2732,7 @@ function abrirLista(qual){
          fatura guarda em parcela_futura.valor_pago */
       const pg = i.k==="c" ? dados.pagos.find(x=>x.conta_fixa_id===i.id)
                            : dados.parcelas.find(x=>x.cartao===i.cartao && x.mes_ref===i.mes);
-      const vPago = i.k==="c" ? (pg ? pg.valor : null) : (pg ? pg.valor_pago : null);
+      const vPago = i.k==="c" ? (i.par ? pagoReal(i.id, i.par) : (pg ? pg.valor : null)) : (pg ? pg.valor_pago : null);
       const realDif = i.pago && vPago!=null && Math.abs(+vPago - i.valor) > 0.005;
       const quando = i.pago ? (realDif ? "pago "+brl(vPago) : "pago") : (atrasada ? "venceu dia "+i.dia : "vence dia "+i.dia);
       const cor = i.pago ? "var(--good)" : (atrasada ? "var(--bad)" : perto ? "var(--warn)" : "var(--ink3)");
@@ -2941,22 +2980,22 @@ $("#slFechar").onclick=()=>fecharSheet("#sheetLista");
 /* ---------------- fechar o mês ---------------- */
 function abrirLote(){
   const r=resumo(), mes=mesRef();
-  const falta=r.doBanco.filter(c=>!r.pagosIds.has(c.id)).length;
+  const falta=faltamContas(r);
   $("#loteTitulo").textContent="Fechar "+nomeMes(mes);
   $("#loteNota").textContent="Marque o que j\u00e1 pagou. Salva sozinho, pode fechar quando quiser. Faltam "+falta+".";
-  $("#loteConteudo").innerHTML = '<div class="list">' + r.doBanco.map(c=>{
-    const pago=r.pagosIds.has(c.id);
+  $("#loteConteudo").innerHTML = '<div class="list">' + juntarPares(r.doBanco, r.pagosIds).map(c=>{
+    const pago=c._junta ? c._pago : r.pagosIds.has(c.id);
     return `<div class="row" data-lote="${c.id}">
       <div class="ic">${c.dia}</div>
       <div class="mid"><div class="t">${c.descricao}</div>
-        <div class="s">dia ${c.dia} \u00b7 ${rotulo(c.frente)}</div></div>
+        <div class="s">dia ${c.dia} \u00b7 ${c._par?rotuloPar(c):rotulo(c.frente)}</div></div>
       <div class="amt">${brl(c.valor)}</div>
       <div class="chk ${pago?"on":""}" style="width:32px;height:32px"></div></div>`;
   }).join("") + '</div>';
   $("#loteConteudo").querySelectorAll("[data-lote]").forEach(row=>{
     row.querySelector(".chk").onclick=async()=>{
       await marcarConta(+row.dataset.lote,row.querySelector(".chk"));
-      const r2=resumo(), f2=r2.doBanco.filter(c=>!r2.pagosIds.has(c.id)).length;
+      const r2=resumo(), f2=faltamContas(r2);
       $("#loteNota").textContent="Marque o que j\u00e1 pagou. Salva sozinho, pode fechar quando quiser. Faltam "+f2+".";
     };
   });
@@ -3188,7 +3227,7 @@ async function conferirSistema(){
   /* 6. conta do mes que ja venceu e nao foi marcada */
   const diaHoje=new Date().getDate();
   const r=resumo();
-  const vencidas=r.doBanco.filter(c=>!r.pagosIds.has(c.id) && c.dia<diaHoje);
+  const vencidas=juntarPares(r.doBanco.filter(c=>!r.pagosIds.has(c.id) && c.dia<diaHoje));
   if(vencidas.length) alerta(vencidas.length+" conta"+(vencidas.length>1?"s":"")+" venceu e não foi marcada",
     vencidas.slice(0,4).map(c=>c.descricao+", dia "+c.dia).join("; "));
   else ok("Contas do mês em dia", "nada vencido sem marcar");
@@ -3362,7 +3401,47 @@ $("#fcSalvar").onclick=async()=>{
   }catch(e){ $("#fcMsg").innerHTML='<div class="msg err">'+e.message+'</div>'; }
 };
 
+/* as duas metades juntas: um toque marca (ou desmarca) as duas, e cada metade
+   sai da conta padrao da propria frente. Da para trocar depois no valor pago. */
+async function marcarPar(id, el){
+  const mes=mesRef(), a=dados.contas.find(c=>c.id===id), b=parDe(a), metades=[a,b];
+  const jaPago=el.classList.contains("on");
+  el.classList.toggle("on");
+  try{
+    if(jaPago){
+      for(const c of metades){
+        const pg=dados.pagos.find(p=>p.conta_fixa_id===c.id); if(!pg) continue;
+        const devolve = pg.valor!=null ? +pg.valor : +c.valor;
+        if(pg.pago_conta_id) await moverSaldo(pg.pago_conta_id, +devolve);
+        await rest("pagamento_conta?conta_fixa_id=eq."+c.id+"&mes_ref=eq."+mes,{method:"DELETE",headers:{Prefer:"return=minimal"}});
+        dados.pagos=dados.pagos.filter(p=>p.conta_fixa_id!==c.id);
+      }
+      toast("Desmarquei as duas metades e o valor voltou para o caixa.");
+    }else{
+      const casal=await meuCasal(), saidas=[];
+      for(const c of metades){
+        if(dados.pagos.some(p=>p.conta_fixa_id===c.id)) continue;
+        const valor=+(+c.valor).toFixed(2), caixa=contaPadrao(c.frente,"pagar",valor);
+        await rest("pagamento_conta",{method:"POST",headers:{Prefer:"return=minimal"},
+          body:JSON.stringify({casal_id:casal,conta_fixa_id:c.id,mes_ref:mes,valor:valor,
+                               pago_conta_id: caixa?caixa.id:null})});
+        dados.pagos.push({conta_fixa_id:c.id,mes_ref:mes,valor:valor,pago_conta_id:caixa?caixa.id:null});
+        if(caixa && valor>0) await moverSaldo(caixa.id, -valor);
+        saidas.push(brl(valor)+" "+rotulo(c.frente)+(caixa?" do "+nomeCurto(caixa):""));
+      }
+      const total=metades.reduce((s,c)=>s+ +c.valor,0);
+      if(a.varia || b.varia){
+        toast("Marquei as duas metades. Confere o valor do mês.");
+        setTimeout(()=>abrirPago(id),260);
+      }else{
+        toastAcao("Pago "+brl(total)+": "+saidas.join(" e ")+".","outro valor ou conta",()=>abrirPago(id));
+      }
+    }
+    pintar();
+  }catch(e){ el.classList.toggle("on"); toast("Não consegui marcar: "+e.message,true); }
+}
 async function marcarConta(id,el){
+  if(parDe(dados.contas.find(c=>c.id===id))) return marcarPar(id, el);
   const mes=mesRef(), jaPago=el.classList.contains("on");
   const conta=dados.contas.find(c=>c.id===id);
   el.classList.toggle("on");
@@ -3401,8 +3480,24 @@ async function marcarConta(id,el){
    nunca e o que o banco cobra: falta compra nao lancada, sobra assinatura que
    nao veio. Quem manda e o valor que saiu da conta. */
 let pagoEd=null;
+function dividirPar(v){
+  const m=pagoEd.metades, tot=m[0].previsto+m[1].previsto;
+  const v0=+(tot>0 ? v*m[0].previsto/tot : v/2).toFixed(2);
+  return [v0, +(v-v0).toFixed(2)];
+}
 function pintarContasPg(){
   const box=$("#pgContas"); if(!box||!pagoEd) return;
+  if(pagoEd.tipo==="par"){
+    const cs=contasDeCaixa();
+    box.innerHTML = pagoEd.metades.map((m,i)=>'<div style="width:100%"><div class="s" style="color:var(--ink2);margin:6px 0 6px">Metade '+rotulo(m.frente)+' saiu de</div><div class="chips">'
+        + cs.map(s=>'<button class="chip'+(String(s.id)===String(m.contaId)?" on":"")+'" data-cx="'+s.id+'" data-mi="'+i+'">'+nomeCurto(s)+'</button>').join("")
+        + '</div></div>').join("")
+      + '<div style="width:100%;margin-top:8px"><button class="chip" id="pgMesma">Saiu tudo da mesma conta</button></div>';
+    box.querySelectorAll("[data-cx]").forEach(b=>b.onclick=()=>{
+      pagoEd.metades[+b.dataset.mi].contaId=+b.dataset.cx; pintarContasPg(); mostrarDifPg(); });
+    $("#pgMesma").onclick=()=>{ pagoEd.metades[1].contaId=pagoEd.metades[0].contaId; pintarContasPg(); mostrarDifPg(); };
+    return;
+  }
   box.innerHTML = contasDeCaixa().map(s=>
     '<button class="chip'+(String(s.id)===String(pagoEd.contaId)?" on":"")+'" data-cx="'+s.id+'">'
     + nomeCurto(s)+'</button>').join("")
@@ -3421,7 +3516,18 @@ function mostrarDifPg(){
       : "<b style='color:var(--warn)'>"+(d>0?"R$ "+Math.abs(d).toLocaleString("pt-BR",{minimumFractionDigits:2})+" a mais"
                                             :"R$ "+Math.abs(d).toLocaleString("pt-BR",{minimumFractionDigits:2})+" a menos")
         + "</b> que o previsto de "+brl(pagoEd.previsto)+".")
-    + (conta ? "<br>Depois de salvar, "+nomeCurto(conta)+" fica com <b>"+brl(sobra)+"</b>." : "");
+    + (conta && pagoEd.tipo!=="par" ? "<br>Depois de salvar, "+nomeCurto(conta)+" fica com <b>"+brl(sobra)+"</b>." : "");
+  if(pagoEd.tipo==="par"){
+    const partes=dividirPar(v), delta={};
+    pagoEd.metades.forEach((m,i)=>{
+      if(m.contaAntiga && m.jaDebitado) delta[m.contaAntiga]=(delta[m.contaAntiga]||0)+m.jaDebitado;
+      if(m.contaId) delta[m.contaId]=(delta[m.contaId]||0)-partes[i];
+    });
+    const novas=[...new Set(pagoEd.metades.map(m=>m.contaId).filter(Boolean))];
+    el.innerHTML += "<br>Fica "+brl(partes[0])+" para "+rotulo(pagoEd.metades[0].frente)+" e "+brl(partes[1])+" para "+rotulo(pagoEd.metades[1].frente)+"."
+      + novas.map(id=>{ const s=contasDeCaixa().find(x=>String(x.id)===String(id)); if(!s) return "";
+          return "<br>Depois de salvar, "+nomeCurto(s)+" fica com <b>"+brl(+(+s.valor+(delta[id]||0)).toFixed(2))+"</b>."; }).join("");
+  }
 }
 function abrirFolhaPg(cfg){
   pagoEd = cfg;
@@ -3434,8 +3540,24 @@ function abrirFolhaPg(cfg){
   abrirSheet("#sheetPago");
   setTimeout(()=>{ $("#pgValor").focus(); $("#pgValor").select(); },120);
 }
+function abrirPagoPar(a, b){
+  const metades=[a,b].map(c=>{ const p=dados.pagos.find(x=>x.conta_fixa_id===c.id);
+    return {id:c.id, frente:c.frente, previsto:+c.valor,
+      valor: (p && p.valor!=null) ? +p.valor : +c.valor,
+      contaAntiga: (p && p.pago_conta_id) || null,
+      jaDebitado: (p && p.pago_conta_id) ? ((p.valor!=null)?+p.valor:+c.valor) : 0,
+      contaId: (p && p.pago_conta_id) || (contaPadrao(c.frente,"pagar",+c.valor)||{}).id || null}; });
+  abrirFolhaPg({tipo:"par", metades, frente:a.frente,
+    titulo: nomeSemMetade(a.descricao),
+    ajuda: "Conta dividida: metade "+rotulo(a.frente)+", metade "+rotulo(b.frente)+". Escreva o valor inteiro que foi pago. O app divide e tira cada metade da conta que você escolher.",
+    valor: +(metades[0].valor+metades[1].valor).toFixed(2),
+    previsto: +(metades[0].previsto+metades[1].previsto).toFixed(2),
+    jaDebitado: metades[0].jaDebitado+metades[1].jaDebitado,
+    contaId: metades[0].contaId});
+}
 function abrirPago(contaId){
   const c=dados.contas.find(x=>x.id===contaId); if(!c) return;
+  const par=parDe(c); if(par) return abrirPagoPar(c, par);
   const p=dados.pagos.find(x=>x.conta_fixa_id===contaId);
   const jaDebitado = (p && p.pago_conta_id) ? (p.valor!=null ? +p.valor : +c.valor) : 0;
   abrirFolhaPg({tipo:"conta", id:contaId,
@@ -3469,6 +3591,28 @@ $("#pgSalvar").onclick=async()=>{
   try{
     /* devolve o que ja tinha sido debitado antes e debita o novo, mesmo que a
        conta tenha mudado. Assim salvar duas vezes nao cobra duas vezes. */
+    if(pagoEd.tipo==="par"){
+      const partes=dividirPar(v), casal=await meuCasal();
+      for(let i=0;i<2;i++){
+        const m=pagoEd.metades[i], pg=dados.pagos.find(x=>x.conta_fixa_id===m.id);
+        if(pg && pg.pago_conta_id && m.jaDebitado) await moverSaldo(pg.pago_conta_id, +m.jaDebitado);
+        if(pg){
+          await rest("pagamento_conta?conta_fixa_id=eq."+m.id+"&mes_ref=eq."+mes,
+            {method:"PATCH",headers:{Prefer:"return=minimal"},
+             body:JSON.stringify({valor:partes[i], pago_conta_id:m.contaId})});
+          pg.valor=partes[i]; pg.pago_conta_id=m.contaId;
+        }else{
+          await rest("pagamento_conta",{method:"POST",headers:{Prefer:"return=minimal"},
+            body:JSON.stringify({casal_id:casal,conta_fixa_id:m.id,mes_ref:mes,valor:partes[i],pago_conta_id:m.contaId})});
+          dados.pagos.push({conta_fixa_id:m.id,mes_ref:mes,valor:partes[i],pago_conta_id:m.contaId});
+        }
+        if(m.contaId && partes[i]>0) await moverSaldo(m.contaId, -partes[i]);
+        try{ if(m.contaId) localStorage.setItem(chavePg(m.frente,"pagar"), String(m.contaId)); }catch(e){}
+      }
+      fecharSheet("#sheetPago");
+      toast("Pago "+brl(v)+": "+brl(partes[0])+" "+rotulo(pagoEd.metades[0].frente)+" e "+brl(partes[1])+" "+rotulo(pagoEd.metades[1].frente)+".");
+      pagoEd=null; pintar(); return;
+    }
     if(pagoEd.tipo==="conta"){
       const pg=dados.pagos.find(x=>x.conta_fixa_id===pagoEd.id);
       if(!pg){ $("#pgMsg").innerHTML='<div class="msg err">Marque a conta como paga primeiro.</div>'; return; }
@@ -3818,6 +3962,14 @@ async function marcarFixaDoLancamento(id, valorReal){
   const mes=mesRef();
   try{
     const casal=await meuCasal();
+    const cf=dados.contas.find(x=>x.id===id), pr=parDe(cf);
+    if(pr){
+      const tot=+cf.valor + +pr.valor, v0=+(tot>0 ? valorReal*(+cf.valor)/tot : valorReal/2).toFixed(2);
+      const corpo=[{casal_id:casal, conta_fixa_id:id, mes_ref:mes, valor:v0}];
+      if(!dados.pagos.some(p=>p.conta_fixa_id===pr.id))
+        corpo.push({casal_id:casal, conta_fixa_id:pr.id, mes_ref:mes, valor:+(valorReal-v0).toFixed(2)});
+      await rest("pagamento_conta",{method:"POST",headers:{Prefer:"return=minimal"},body:JSON.stringify(corpo)});
+    }else
     await rest("pagamento_conta",{method:"POST",headers:{Prefer:"return=minimal"},
       body:JSON.stringify({casal_id:casal, conta_fixa_id:id, mes_ref:mes, valor:+valorReal.toFixed(2)})});
     fecharSheet("#sheet");
@@ -4039,6 +4191,10 @@ function abrirConta(id){
   $("#ctInicio").value = c && c.inicio ? String(c.inicio).slice(0,7) : "";
   $("#ctFim").value    = c && c.fim    ? String(c.fim).slice(0,7)    : "";
   $("#ctExcluir").classList.toggle("hide", !c);
+  const pc=parDe(c);
+  contaEd.par = pc ? pc.id : null;
+  if(pc) $("#ctMsg").innerHTML='<div class="msg ok">Conta dividida com '+rotulo(pc.frente)+'. O valor aqui é só desta metade; a conta inteira é '
+    + brl(+c.valor + +pc.valor)+'. Nome, valor, dia e datas valem para as duas metades, e remover tira as duas.</div>';
   pintarCtFrentes(); pintarCtPago(); pintarCtPeriodo(); abrirSheet("#sheetConta");
 }
 function pintarCtFrentes(){
@@ -4070,7 +4226,12 @@ $("#ctSalvar").onclick = async ()=>{
                mes_venc: contaEd.periodicidade==="anual" ? +$("#ctMes").value : null,
                inicio: ini ? ini+"-01" : null, fim: fi ? fi+"-01" : null};
   try{
-    if(contaEd.id) await rest("conta_fixa?id=eq."+contaEd.id,{method:"PATCH",headers:{Prefer:"return=minimal"},body:JSON.stringify(corpo)});
+    if(contaEd.id){
+      await rest("conta_fixa?id=eq."+contaEd.id,{method:"PATCH",headers:{Prefer:"return=minimal"},body:JSON.stringify(corpo)});
+      /* a outra metade acompanha tudo, menos a frente */
+      if(contaEd.par){ const espelho=Object.assign({}, corpo); delete espelho.frente;
+        await rest("conta_fixa?id=eq."+contaEd.par,{method:"PATCH",headers:{Prefer:"return=minimal"},body:JSON.stringify(espelho)}); }
+    }
     else { corpo.casal_id=await meuCasal(); await rest("conta_fixa",{method:"POST",headers:{Prefer:"return=minimal"},body:JSON.stringify(corpo)}); }
     fecharSheet("#sheetConta"); toast("Conta salva."); await carregar();
   }catch(e){ $("#ctMsg").innerHTML='<div class="msg err">'+e.message+'</div>'; }
@@ -4079,6 +4240,7 @@ $("#ctExcluir").onclick = async ()=>{
   if(!contaEd.id) return;
   try{
     await rest("conta_fixa?id=eq."+contaEd.id,{method:"PATCH",headers:{Prefer:"return=minimal"},body:JSON.stringify({ativo:false})});
+    if(contaEd.par) await rest("conta_fixa?id=eq."+contaEd.par,{method:"PATCH",headers:{Prefer:"return=minimal"},body:JSON.stringify({ativo:false})});
     fecharSheet("#sheetConta"); toast("Conta removida da lista."); await carregar();
   }catch(e){ $("#ctMsg").innerHTML='<div class="msg err">'+e.message+'</div>'; }
 };

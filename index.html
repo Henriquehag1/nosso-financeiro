@@ -600,7 +600,7 @@ select.inp{appearance:none;background-image:linear-gradient(45deg,transparent 50
    A chave abaixo e publica de proposito: ela sozinha nao le nada.
    Quem decide o que cada pessoa enxerga e o proprio banco (RLS).
    ============================================================ */
-const VERSAO = "55";
+const VERSAO = "56";
 const SB  = "https://oihyhyyhessqnpkknhsi.supabase.co";
 const KEY = "sb_publishable_T7LERNVYS8mAK0tOlWfl5A_4-yCUjie";
 const LS_SESS = "nf.sessao", LS_FILA = "nf.fila", LS_CASAL = "nf.casal", LS_REJ = "nf.recusados", LS_FRENTE = "nf.frenteLanc", LS_CONTA_PG = "nf.contaPagamento";
@@ -667,6 +667,15 @@ function catEFrente(c, frente){ const n=nomeCat(c), r=rotulo(frente);
   return n.toLowerCase().endsWith(" · "+r) ? n : n+" · "+r; }
 /* nome curto de uma conta fixa: tira o que esta entre parenteses */
 function nomeCurtoConta(d){ return String(d||"").split(" (")[0]; }
+/* excluir pede um segundo toque: o primeiro so arma o botao por 5 segundos */
+function armar(btn, aviso){
+  if(btn.dataset.armado==="1"){ clearTimeout(btn._t); btn.dataset.armado=""; btn.textContent=btn.dataset.orig; return true; }
+  btn.dataset.orig = btn.dataset.orig || btn.textContent;
+  btn.dataset.armado="1"; btn.textContent=aviso;
+  clearTimeout(btn._t);
+  btn._t=setTimeout(()=>{ btn.dataset.armado=""; btn.textContent=btn.dataset.orig; },5000);
+  return false;
+}
 function toast(txt,erro){
   const t=document.createElement("div"); t.className="toast"+(erro?" err":""); t.textContent=txt;
   document.body.appendChild(t); setTimeout(()=>t.remove(),2800);
@@ -4157,6 +4166,7 @@ $("#fSalvar").onclick = async ()=>{
 };
 $("#fExcluir").onclick = async ()=>{
   if(!form.id) return;
+  if(!armar($("#fExcluir"), "Toque de novo para excluir o lançamento")) return;
   try{
     const ev = dados.eventos.find(x=>x.id===form.id);
     if(ev && ev.grupo){
@@ -4289,6 +4299,7 @@ $("#ctSalvar").onclick = async ()=>{
 };
 $("#ctExcluir").onclick = async ()=>{
   if(!contaEd.id) return;
+  if(!armar($("#ctExcluir"), "Toque de novo para excluir a conta")) return;
   try{
     await rest("conta_fixa?id=eq."+contaEd.id,{method:"PATCH",headers:{Prefer:"return=minimal"},body:JSON.stringify({ativo:false})});
     if(contaEd.par) await rest("conta_fixa?id=eq."+contaEd.par,{method:"PATCH",headers:{Prefer:"return=minimal"},body:JSON.stringify({ativo:false})});
@@ -4364,6 +4375,8 @@ $("#sdSalvar").onclick = async ()=>{
 };
 $("#sdExcluir").onclick = async ()=>{
   if(!saldoEd.id) return;
+  { const sx=(dados.saldos||[]).find(x=>x.id===saldoEd.id);
+    if(!armar($("#sdExcluir"), "Toque de novo para excluir"+(sx? " "+nomeCurto(sx)+(+sx.valor? " ("+brl(+sx.valor)+")":"") : ""))) return; }
   try{
     await rest("conta_saldo?id=eq."+saldoEd.id,{method:"DELETE",headers:{Prefer:"return=minimal"}});
     fecharSheet("#sheetSaldo"); toast("Conta excluída."); await carregar();

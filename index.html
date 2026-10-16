@@ -480,7 +480,7 @@ select.inp{appearance:none;background-image:linear-gradient(45deg,transparent 50
     <div class="handle"></div>
     <h3 id="tetoTitulo">Teto do mês</h3>
     <p style="color:var(--ink2);font-size:14px;margin:0 0 12px">
-      Quanto vocês querem, no máximo, gastar por mês nesta categoria. Serve para o que varia, tipo mercado e comer fora. O que é fixo já tem valor conhecido e não precisa de teto.</p>
+      Quanto vocês querem, no máximo, gastar por mês nesta categoria. Serve para o que varia, tipo mercado e comer fora. O que é fixo já tem valor conhecido e não precisa de teto. Compra parcelada conta inteira no mês em que foi feita.</p>
     <div class="lbl" style="margin-top:0">Teto por mês</div>
     <input class="inp" id="tetoValor" inputmode="decimal" placeholder="0,00">
     <div id="tetoMsg"></div>
@@ -601,7 +601,7 @@ select.inp{appearance:none;background-image:linear-gradient(45deg,transparent 50
    A chave abaixo e publica de proposito: ela sozinha nao le nada.
    Quem decide o que cada pessoa enxerga e o proprio banco (RLS).
    ============================================================ */
-const VERSAO = "57";
+const VERSAO = "58";
 const SB  = "https://oihyhyyhessqnpkknhsi.supabase.co";
 const KEY = "sb_publishable_T7LERNVYS8mAK0tOlWfl5A_4-yCUjie";
 const LS_SESS = "nf.sessao", LS_FILA = "nf.fila", LS_CASAL = "nf.casal", LS_REJ = "nf.recusados", LS_FRENTE = "nf.frenteLanc", LS_CONTA_PG = "nf.contaPagamento";
@@ -1972,7 +1972,7 @@ function pintarTetos(r){
       + (somaG>somaT?"var(--bad)":somaG>somaT*0.8?"var(--warn)":"var(--good)")+'"></i></div>'
     + '<div class="s" style="color:var(--ink3)">gasto que já aconteceu, dia '+dia+' de '+ultimo
       + (somaAg>0||somaPa>0 ? ' · fora da barra: '
-          + [somaAg>0? brl0(somaAg)+" agendado":"", somaPa>0? brl0(somaPa)+" de parcela antiga":""]
+          + [somaAg>0? brl0(somaAg)+" agendado":"", somaPa>0? brl0(somaPa)+" já comprometido em parcelas":""]
             .filter(Boolean).join(" e ") : '')
       + '</div></div>'
     + '<div class="r" style="font-size:15px;font-weight:700;color:'+(sobra<0?"var(--bad)":"var(--ink)")+'">'
@@ -1982,7 +1982,7 @@ function pintarTetos(r){
         const cor = x.g>x.t ? "var(--bad)" : x.g>x.t*0.8 ? "var(--warn)" : "var(--good)";
         const fora=[];
         if(x.ag>0) fora.push(brl0(x.ag)+" agendado");
-        if(x.pa>0) fora.push(brl0(x.pa)+" de parcela antiga");
+        if(x.pa>0) fora.push(brl0(x.pa)+" já comprometido");
         return '<div class="row tetoRow tap" data-tt="'+x.c.id+'">'
           + '<div class="mid"><div class="t">'+nomeCat(x.c)+'</div>'
           + '<div class="barra"><i style="width:'+pct.toFixed(0)+'%;background:'+cor+'"></i></div>'
@@ -2903,9 +2903,9 @@ function abrirLista(qual){
       + (somaTeto>0 ? " de "+brl(somaTeto)+" em tetos" : "")
       + (mes===mesRef() ? ", e hoje é dia "+dia+" de "+ultimo+"." : ".")
       + "<br><br>Fica de fora, de propósito: <b>"+brl(somaAgend)+"</b> com data ainda por vir neste mês, "
-      + "e <b>"+brl(somaParc)+"</b> de parcelas de compras de meses anteriores. "
-      + "Parcela velha não é decisão deste mês, é conta antiga chegando; somar as duas coisas "
-      + "faz o teto parecer estourado antes de você gastar."
+      + "e <b>"+brl(somaParc)+"</b> já comprometido em parcelas de compras de meses anteriores. "
+      + "<br><br><b>Compra parcelada nova conta inteira</b> no mês em que é feita: um item de 1.200 em 12x "
+      + "ocupa 1.200 do teto, não 100. As parcelas seguintes ficam fora da barra, para não contar duas vezes."
       + "<br><br><b>Toque numa categoria</b> para ver item por item o que entrou em cada um dos três grupos.";
     $("#slAdd").textContent=""; $("#slAdd").onclick=null;
 
@@ -2915,7 +2915,7 @@ function abrirLista(qual){
                 : y.x.gastei>y.t*0.8 ? "var(--warn)" : "var(--good)";
       const extra = [];
       if(y.x.agendado>0) extra.push(brl0(y.x.agendado)+" agendado");
-      if(y.x.parcela>0)  extra.push(brl0(y.x.parcela)+" de parcela antiga");
+      if(y.x.parcela>0)  extra.push(brl0(y.x.parcela)+" já comprometido");
       return '<div class="row tap" data-cat="'+y.c.id+'">'
         + '<div class="mid"><div class="t">'+nomeCat(y.c)+'</div>'
         + (y.t>0 ? '<div class="bar"><i style="width:'+pct.toFixed(0)+'%;background:'+cor+'"></i></div>'
@@ -2988,16 +2988,27 @@ async function marcarFatura(nomeCartao, mes, el){
      parcela  parcela 2 ou mais de compra de mes anterior, caindo aqui
    Parcela velha nao e decisao deste mes, e conta antiga chegando, e no dia 3
    nao faz sentido somar o que so vai acontecer no dia 17. */
+/* v58: compra parcelada NOVA entra inteira no teto do mes em que foi feita.
+   Antes so a parcela 1 contava, e um tenis de 5.600 em 12x ocupava 467 do
+   teto: a compra passava inteira e a barra nem mexia. As parcelas 2 em diante
+   seguem fora da barra, como "ja comprometido", para nao contar duas vezes. */
+function totalDoGrupo(e){
+  if(!e.grupo) return +e.valor;
+  const t=(dados.eventos||[]).filter(x=>x.grupo===e.grupo).reduce((a,x)=>a+ +x.valor,0);
+  return t>0 ? t : +e.valor*(e.parcelas||1);
+}
 function gastoPorCategoria(mes){
   const fim=mesSeguinte(mes), hoje=hojeISO(), map={};
   filtra(dados.eventos).filter(e=>e.tipo==="gasto" && e.data>=mes && e.data<fim)
     .forEach(e=>{
       const o = map[e.categoria_id] ||
         (map[e.categoria_id] = {gastei:0, agendado:0, parcela:0, itens:[]});
-      const velha = e.forma==="cartao" && (e.parcelas||1)>1 && (e.parcela_num||1)>1;
+      const parcelado = (e.parcelas||1)>1;
+      const velha = parcelado && (e.parcela_num||1)>1;
       const k = velha ? "parcela" : (e.data>hoje ? "agendado" : "gastei");
-      o[k] += +e.valor;
-      o.itens.push({e:e, k:k});
+      const v = (parcelado && !velha) ? totalDoGrupo(e) : +e.valor;
+      o[k] += v;
+      o.itens.push({e:e, k:k, v:v, cheia: parcelado && !velha});
     });
   return map;
 }
@@ -3183,7 +3194,7 @@ function abrirDetalheCategoria(catId, mes){
         ? "<br><br>Além disso: "
           + (x.agendado>0 ? "<b>"+brl(x.agendado)+"</b> com data ainda por vir" : "")
           + (x.agendado>0&&x.parcela>0 ? ", e " : "")
-          + (x.parcela>0 ? "<b>"+brl(x.parcela)+"</b> de parcelas de compras feitas antes deste mês" : "")
+          + (x.parcela>0 ? "<b>"+brl(x.parcela)+"</b> já comprometido em parcelas de compras feitas antes deste mês" : "")
           + ". Nada disso conta na barra."
         : "");
   $("#slAdd").textContent = teto>0 ? "mudar teto" : "definir teto";
@@ -3191,17 +3202,18 @@ function abrirDetalheCategoria(catId, mes){
 
   const linha=(it)=>{
     const e=it.e;
-    const parc = (e.parcelas||1)>1 ? " · parcela "+(e.parcela_num||1)+" de "+e.parcelas : "";
+    const parc = it.cheia ? " · compra inteira em "+e.parcelas+"x de "+brl(e.valor)
+               : (e.parcelas||1)>1 ? " · parcela "+(e.parcela_num||1)+" de "+e.parcelas : "";
     const quando = e.data>hoje ? "cai em "+dataCurta(e.data) : rotuloDia(e.data);
     return '<div class="row tap" data-ev="'+e.id+'"><div class="mid">'
       + '<div class="t">'+(e.descricao||nomeCat(c))+'</div>'
       + '<div class="s">'+quando+" · "+(e.forma||"")+parc+" · "+rotulo(e.frente)+'</div></div>'
-      + '<div class="amt">'+brl(e.valor)+'</div></div>';
+      + '<div class="amt">'+brl(it.v!=null ? it.v : e.valor)+'</div></div>';
   };
   const bloco=(titulo, chave, cor, nota)=>{
     const itens=x.itens.filter(i=>i.k===chave).sort((a,b)=>a.e.data<b.e.data?-1:1);
     if(!itens.length) return "";
-    const soma=itens.reduce((a,i)=>a+ +i.e.valor,0);
+    const soma=itens.reduce((a,i)=>a+ +(i.v!=null ? i.v : i.e.valor),0);
     return '<div class="sechead" style="margin:14px 0 8px"><h2 class="sec"'+(cor?' style="color:'+cor+'"':'')+'>'
       + titulo+'</h2><span class="add" style="color:var(--ink3)">'+brl(soma)+'</span></div>'
       + (nota? '<div class="nota" style="margin:0 0 8px">'+nota+'</div>' : '')
@@ -3210,11 +3222,11 @@ function abrirDetalheCategoria(catId, mes){
 
   $("#slConteudo").innerHTML =
       bloco("Conta na barra", "gastei", null,
-            "Compras feitas neste mês que já aconteceram. É isto que o teto mede.")
+            "Compras feitas neste mês que já aconteceram. É isto que o teto mede. Compra parcelada feita neste mês conta inteira aqui.")
     + bloco("Ainda vai acontecer", "agendado", "var(--warn)",
             "Tem data neste mês, mas ainda não chegou. Vai entrar na barra no dia.")
-    + bloco("Parcela de compra antiga", "parcela", "var(--ink3)",
-            "Compra feita em outro mês, chegando parcelada. Sai da conta agora, mas a decisão de gastar foi lá atrás.")
+    + bloco("Já comprometido", "parcela", "var(--ink3)",
+            "Parcelas de compras feitas em outro mês. Saem da conta agora, mas a compra já contou inteira no teto do mês em que foi feita.")
     || '<div class="empty">Nada nesta categoria em '+nomeMes(mes)+'.</div>';
 
   $("#slConteudo").querySelectorAll("[data-ev]").forEach(el=>el.onclick=()=>{

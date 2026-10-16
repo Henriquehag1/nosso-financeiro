@@ -316,7 +316,8 @@ select.inp{appearance:none;background-image:linear-gradient(45deg,transparent 50
       <button data-tipo="entrada">Entrou dinheiro</button>
     </div>
 
-    <div class="lbl">Valor</div>
+    <div id="fGrupoNota" class="msg info hide" style="margin-top:14px"></div>
+    <div class="lbl" id="fValorLbl">Valor</div>
     <input class="valor" id="fValor" inputmode="decimal" placeholder="0,00">
 
     <div id="fFrenteBox">
@@ -600,7 +601,7 @@ select.inp{appearance:none;background-image:linear-gradient(45deg,transparent 50
    A chave abaixo e publica de proposito: ela sozinha nao le nada.
    Quem decide o que cada pessoa enxerga e o proprio banco (RLS).
    ============================================================ */
-const VERSAO = "56";
+const VERSAO = "57";
 const SB  = "https://oihyhyyhessqnpkknhsi.supabase.co";
 const KEY = "sb_publishable_T7LERNVYS8mAK0tOlWfl5A_4-yCUjie";
 const LS_SESS = "nf.sessao", LS_FILA = "nf.fila", LS_CASAL = "nf.casal", LS_REJ = "nf.recusados", LS_FRENTE = "nf.frenteLanc", LS_CONTA_PG = "nf.contaPagamento";
@@ -3760,6 +3761,73 @@ function recentes(){
   return out;
 }
 let editandoParcelado=false;
+const semSufixo = d => (d||"").replace(/\s+\d+\/\d+$/,"").trim();
+/* busca no banco, nao na memoria: a memoria so guarda 12 meses e uma compra
+   em 18x poderia vir pela metade */
+async function irmaosDoGrupo(grupo){
+  return await rest("evento?grupo=eq."+grupo
+    + "&select=id,data,valor,tipo,frente,descricao,forma,cartao,categoria_id,obs,parcelas,parcela_num,grupo,baixado_em,baixa_conta_id,baixa_receber_id"
+    + "&order=parcela_num.asc") || [];
+}
+async function carregarGrupoNaFolha(ev){
+  const nota=$("#fGrupoNota");
+  nota.classList.remove("hide");
+  nota.innerHTML='Carregando as parcelas desta compra...';
+  $("#fSalvar").disabled=true;
+  try{
+    const irmaos = await irmaosDoGrupo(ev.grupo);
+    if(form.id!==ev.id) return;           /* a folha ja foi fechada ou trocada */
+    const prim = irmaos[0] || ev;
+    const n = prim.parcelas || irmaos.length || 1;
+    const total = +irmaos.reduce((a,x)=>a+ +x.valor,0).toFixed(2);
+    const maq = prim.forma==="maquininha";
+    form.grupo = { id:ev.grupo, irmaos, n, total, maq,
+      tipo:prim.tipo, forma:prim.forma, cartao:prim.cartao||null, data:prim.data,
+      frente:prim.frente, catId:prim.categoria_id, desc:semSufixo(prim.descricao) };
+    $("#fDesc").value = form.grupo.desc;
+    if(maq){
+      /* recebimento na maquininha: o valor gravado ja e o liquido de cada
+         parcela, com data propria. Nao da para refazer daqui sem a taxa. */
+      $("#fValor").value=num(ev.valor); $("#fValor").disabled=true;
+      $("#fValorLbl").textContent="Valor desta parcela";
+      nota.innerHTML='Recebimento em <b>'+n+' vezes</b>. O que você mudar aqui (descrição, categoria ou frente) '
+        + 'vale para as <b>'+n+' parcelas</b> de uma vez. Valor e datas da maquininha não mudam por aqui: '
+        + 'para isso, exclua e lance de novo.';
+    }else{
+      form.parcelas = n;
+      $("#fValor").value=num(total); $("#fValor").disabled=false;
+      $("#fValorLbl").textContent="Valor total da compra";
+      $("#fData").value = prim.data;
+      nota.innerHTML='Compra em <b>'+n+' vezes</b> de '+brl(+((irmaos[1]||prim).valor))+'. '
+        + 'O que você mudar aqui vale para as <b>'+n+' parcelas</b> de uma vez. '
+        + 'Se mudar o valor, o cartão, a data ou o número de vezes, eu refaço a compra inteira e acerto as faturas sozinho.';
+      pintarFormas(); pintarParcelas();
+    }
+    $("#fSalvar").disabled=false;
+  }catch(e){
+    nota.innerHTML='Não consegui carregar as parcelas ('+e.message+'). Feche e abra de novo.';
+  }
+}
+/* Apaga a compra parcelada inteira: devolve o que ja tinha baixado no caixa,
+   tira do "a receber" e tira a projecao das faturas. */
+async function excluirGrupo(grupo){
+  const irmaos = await irmaosDoGrupo(grupo);
+  if(!irmaos.length) return 0;
+  const prim = irmaos[0];
+  const n = prim.parcelas || irmaos.length;
+  const seg = irmaos.find(x=>(x.parcela_num||0)>1);
+  const porMes = +((seg || prim).valor);
+  for(const x of irmaos) await desfazerBaixa(x);
+  if(prim.tipo==="entrada" && prim.forma==="maquininha")
+    await somarAoReceber(prim.frente, -irmaos.reduce((a,x)=>a+ +x.valor,0));
+  await rest("evento?grupo=eq."+grupo,{method:"DELETE",headers:{Prefer:"return=minimal"}});
+  if(prim.tipo==="gasto" && prim.forma==="cartao" && prim.cartao){
+    await api("/rest/v1/rpc/somar_parcelas",{method:"POST",body:JSON.stringify({
+      p_cartao:prim.cartao, p_mes:mesDaFatura(prim.cartao, prim.data), p_n:n,
+      p_valor:-porMes, p_frente:prim.frente||"casa"})});
+  }
+  return n;
+}
 function abrirFolha(evId){
   const ev = evId ? dados.eventos.find(x=>x.id===evId) : null;
   if(ev){
@@ -3769,15 +3837,12 @@ function abrirFolha(evId){
     $("#fSalvar").textContent="Salvar alterações";
     $("#fExcluir").classList.toggle("hide", ev.origem!=="manual");
     $("#fRecentesBox").classList.add("hide");
-    /* Parcela de uma compra parcelada: mudar valor, cartao ou forma aqui
-       deixaria a projecao do cartao desencontrada, porque parcela_futura nao
-       e recalculada no PATCH. Melhor travar e mandar excluir e refazer. */
+    /* Parcela de uma compra parcelada: a folha passa a editar a COMPRA
+       inteira. Descricao, categoria e frente valem para todas as parcelas.
+       Mudar valor, cartao, data ou numero de vezes refaz a compra (grava a
+       nova, depois tira a antiga e a projecao dela das faturas). */
     editandoParcelado = !!ev.grupo;
-    if(editandoParcelado){
-      $("#fMsg").innerHTML='<div class="msg err">Esta é a parcela '+(ev.parcela_num||1)+' de '+(ev.parcelas||1)
-        + '. Aqui dá para corrigir só a descrição e a categoria. Para mudar valor, cartão ou forma de pagamento, '
-        + 'exclua a compra inteira (o botão Excluir apaga as '+(ev.parcelas||1)+' parcelas e desfaz a projeção do cartão) e lance de novo.</div>';
-    }
+    if(editandoParcelado) carregarGrupoNaFolha(ev);
   }else{
     editandoParcelado=false;
     let ff=null; try{ ff=localStorage.getItem(LS_FRENTE)||null; }catch(e){}
@@ -3792,6 +3857,10 @@ function abrirFolha(evId){
     pintarRecentes();
   }
   $("#fMsg").innerHTML="";
+  if(!editandoParcelado){
+    $("#fGrupoNota").classList.add("hide"); $("#fValor").disabled=false;
+    $("#fValorLbl").textContent="Valor"; $("#fSalvar").disabled=false;
+  }
   segTipo(); pintarFrentes(); pintarCats(); pintarFormas(); pintarParcelas(); pintarDestino();
   abrirSheet("#sheet");
   if(!ev) setTimeout(()=>$("#fValor").focus(),120);
@@ -3902,12 +3971,13 @@ function notaMaquininha(){
 const OPC_PARC=[1,2,3,4,5,6,10,12,18];
 function pintarParcelas(){
   const box=$("#fParcelas"), caixa=$("#fParcelasBox");
-  if(form.id){ caixa.classList.add("hide"); return; }   /* editando: nao mexe em parcela por aqui */
+  if(form.id && !(form.grupo && !form.grupo.maq)){ caixa.classList.add("hide"); return; }   /* editando avulso: nao parcela por aqui */
 
   caixa.classList.remove("hide");
   const rec = form.tipo==="entrada";
   $("#fParcelasBox").querySelector(".lbl").textContent = rec ? "Recebo em quantas vezes" : "Em quantas vezes";
-  box.innerHTML = OPC_PARC.map(n=>'<button class="chip'+(form.parcelas===n?" on":"")+'" data-pc="'+n+'">'
+  const opcs=[...new Set(OPC_PARC.concat(form.parcelas||1))].sort((a,b)=>a-b);
+  box.innerHTML = opcs.map(n=>'<button class="chip'+(form.parcelas===n?" on":"")+'" data-pc="'+n+'">'
     + (n===1 ? (rec?"De uma vez":"À vista") : n+"x")+'</button>').join("");
   box.querySelectorAll("[data-pc]").forEach(b=>b.onclick=()=>{
     form.parcelas=+b.dataset.pc; pintarParcelas(); pintarDestino(); notaMaquininha();
@@ -4075,11 +4145,36 @@ $("#fSalvar").onclick = async ()=>{
     forma:form.forma, cartao:form.cartao,
     situacao: form.forma==="cartao" ? "aguardando_fatura" : "confirmado" };
   $("#fSalvar").textContent="Salvando...";
+  const g = form.id && editandoParcelado ? form.grupo : null;
+  if(form.id && editandoParcelado && !g){
+    $("#fMsg").innerHTML='<div class="msg err">Ainda carregando as parcelas. Espere um instante e toque de novo.</div>'; return;
+  }
+  const refazer = !!(g && !g.maq && (
+       Math.abs(valor - g.total) > 0.004 || form.tipo!==g.tipo || form.forma!==g.forma
+    || (form.forma==="cartao" && form.cartao!==g.cartao) || corpo.data!==g.data
+    || (form.parcelas||1)!==g.n ));
   try{
-    if(form.id){
-      if(editandoParcelado){
-        for(const k of ["valor","cartao","forma","data","frente"]) delete corpo[k];
+    if(g && !refazer){
+      /* so descricao, categoria e frente: grava nas N parcelas de uma vez */
+      const base = semSufixo(corpo.descricao);
+      const novaFrente = corpo.frente;
+      if(novaFrente!==g.frente){
+        /* o que ja tinha baixado volta, e o conciliador baixa de novo no
+           caixa da frente nova */
+        let noReceber=0;
+        for(const x of g.irmaos){
+          if(x.baixa_conta_id){ if(x.baixa_receber_id) noReceber+= +x.valor; await desfazerBaixa(x); }
+          else if(g.maq && x.data>hojeISO()) noReceber+= +x.valor;
+        }
+        if(g.maq && g.tipo==="entrada" && noReceber){
+          await somarAoReceber(g.frente, -noReceber); await somarAoReceber(novaFrente, noReceber);
+        }
       }
+      await Promise.all(g.irmaos.map(x=>rest("evento?id=eq."+x.id,{method:"PATCH",headers:{Prefer:"return=minimal"},
+        body:JSON.stringify({ categoria_id:corpo.categoria_id, frente:novaFrente,
+          descricao:(base||nomeCat(dados.cat.find(c=>c.id===form.catId)))+" "+(x.parcela_num||1)+"/"+g.n })})));
+      toast("Compra atualizada nas "+g.n+" parcelas.");
+    }else if(form.id && !refazer){
       /* se ja tinha mexido no caixa, desfaz com o valor antigo antes de gravar
          o novo; o conciliador refaz na sequencia com o valor certo */
       const antigo = dados.eventos.find(x=>x.id===form.id);
@@ -4087,6 +4182,7 @@ $("#fSalvar").onclick = async ()=>{
       await rest("evento?id=eq."+form.id,{method:"PATCH",headers:{Prefer:"return=minimal"},body:JSON.stringify(corpo)});
       toast("Lançamento atualizado.");
     }else{
+      if(refazer) corpo.descricao = semSufixo(corpo.descricao) || null;
       const casal=await meuCasal();
       const n=Math.max(1, form.parcelas||1);
       if(n===1){
@@ -4147,6 +4243,12 @@ $("#fSalvar").onclick = async ()=>{
         }
         toast(n+(form.tipo==="entrada" ? " recebimentos de " : " parcelas de ")+brl(parcela)+" lançados.");
       }
+      /* refazer: a compra nova ja esta gravada; so agora tira a antiga, para
+         nunca ficar sem nenhuma se a internet cair no meio */
+      if(refazer){
+        await excluirGrupo(g.id);
+        toast("Compra refeita: "+n+(n>1?" parcelas":" lançamento")+", faturas acertadas.");
+      }
     }
     fecharSheet("#sheet"); await carregar();
   }catch(e){
@@ -4171,23 +4273,7 @@ $("#fExcluir").onclick = async ()=>{
     const ev = dados.eventos.find(x=>x.id===form.id);
     if(ev && ev.grupo){
       /* Parcelado: excluir apaga o grupo INTEIRO e tira as parcelas das faturas. */
-      const irmaos = dados.eventos.filter(x=>x.grupo===ev.grupo)
-                       .sort((a,b)=>(a.parcela_num||0)-(b.parcela_num||0));
-      const primeiro = irmaos[0] || ev;
-      const n = ev.parcelas || irmaos.length || 1;
-      const seg = irmaos.find(x=>(x.parcela_num||0)>1);
-      const porMes = +((seg || primeiro).valor);
-      /* devolve ao caixa o que ja tinha entrado ou saido das parcelas vencidas,
-         e tira de "ainda vai cair" o que estava reservado */
-      for(const x of irmaos) await desfazerBaixa(x);
-      if(ev.tipo==="entrada" && ev.forma==="maquininha")
-        await somarAoReceber(ev.frente, -irmaos.reduce((a,x)=>a+ +x.valor,0));
-      await rest("evento?grupo=eq."+ev.grupo,{method:"DELETE",headers:{Prefer:"return=minimal"}});
-      if(ev.forma==="cartao" && ev.cartao){
-        await api("/rest/v1/rpc/somar_parcelas",{method:"POST",body:JSON.stringify({
-          p_cartao:ev.cartao, p_mes:mesDaFatura(ev.cartao, primeiro.data), p_n:n,
-          p_valor:-porMes, p_frente:ev.frente||"casa"})});
-      }
+      const n = await excluirGrupo(ev.grupo);
       fecharSheet("#sheet"); toast("Compra parcelada excluída por inteiro: "+n+" parcelas saíram das faturas.");
     }else{
       await desfazerBaixa(ev);

@@ -225,6 +225,28 @@ select.inp{appearance:none;background-image:linear-gradient(45deg,transparent 50
   background:var(--good);color:#151513;border-radius:12px;padding:13px 15px;font-size:14px;font-weight:600;
   max-width:608px;margin:0 auto;text-align:center}
 .toast.err{background:var(--bad);color:#fff}
+/* contas a pagar */
+.cal{display:grid;grid-template-columns:repeat(7,1fr);gap:4px}
+.cal .wd{font-size:10px;color:var(--ink3);text-align:center;padding-bottom:2px;letter-spacing:.02em}
+.cal .cd{min-height:48px;border-radius:8px;background:var(--surface2);padding:4px 5px;display:flex;flex-direction:column;
+  justify-content:space-between;font-variant-numeric:tabular-nums;overflow:hidden}
+.cal .cd.tem{cursor:pointer}
+.cal .cd .dn{font-size:11px;color:var(--ink2);line-height:1.1}
+.cal .cd .dn i{font-style:normal;font-size:9px;color:var(--ink);font-weight:600}
+.cal .cd .dx{font-size:10px;font-weight:700;color:#fff;white-space:nowrap;letter-spacing:-.02em}
+.cal .cd .dx.at{color:#ffd0ca}
+.cal .cd.tem .dn{color:#fff}
+.cal .cd.fora{opacity:.3}
+.cal .cd.hoje{box-shadow:inset 0 0 0 1.5px var(--ink)}
+.cal .cd.sel{box-shadow:inset 0 0 0 2px var(--gold)}
+.pill{display:inline-block;font-size:11px;padding:2px 8px;border-radius:999px;white-space:nowrap;margin-top:3px}
+.pill.ok{background:rgba(76,191,88,.16);color:var(--good)}
+.pill.warn{background:rgba(229,169,43,.16);color:var(--warn)}
+.pill.bad{background:rgba(224,106,95,.2);color:#ffb6ae}
+.pill.neu{background:var(--surface2);color:var(--ink2)}
+#sheetPagar .nota{font-size:12px;color:var(--ink3);line-height:1.5;margin:8px 2px 0}
+#sheetPagar .sechead{margin:22px 0 10px}
+#apSemanas svg{max-height:230px}
 </style>
 </head>
 <body>
@@ -454,6 +476,30 @@ select.inp{appearance:none;background-image:linear-gradient(45deg,transparent 50
   </div>
 </div>
 
+<!-- ================= CONTAS A PAGAR ================= -->
+<div class="sheet hide" id="sheetPagar">
+  <div class="panel">
+    <div class="handle"></div>
+    <h3>Contas a pagar</h3>
+    <p style="color:var(--ink2);font-size:13px;margin:-8px 0 12px" id="apSub"></p>
+    <div class="chips" id="apJanela" style="margin-bottom:14px"></div>
+    <div class="kpis" id="apKpis"></div>
+    <div class="sechead"><h2 class="sec">Calendário</h2><span class="add" style="color:var(--ink3)">mais escuro, mais sai</span></div>
+    <div class="card" id="apCal" style="padding:10px"></div>
+    <div id="apDia"></div>
+    <div class="sechead"><h2 class="sec">Conferir antes de pagar</h2><span class="add" style="color:var(--ink3)" id="apConfN"></span></div>
+    <div class="list" id="apConf"></div>
+    <div class="sechead"><h2 class="sec">Saídas por semana</h2></div>
+    <div class="colchart" id="apSemanas"></div>
+    <div class="sechead"><h2 class="sec">Por tipo</h2></div>
+    <div class="card graf" id="apTipos"></div>
+    <div class="sechead"><h2 class="sec">Tudo, dia a dia</h2><span class="add" style="color:var(--ink3)">toque para abrir</span></div>
+    <div class="list" id="apLista"></div>
+    <div style="height:20px"></div>
+    <button class="btn ghost" id="apFechar">Fechar</button>
+  </div>
+</div>
+
 <!-- ================= VALOR PAGO ================= -->
 <div class="sheet hide" id="sheetPago">
   <div class="panel">
@@ -601,7 +647,7 @@ select.inp{appearance:none;background-image:linear-gradient(45deg,transparent 50
    A chave abaixo e publica de proposito: ela sozinha nao le nada.
    Quem decide o que cada pessoa enxerga e o proprio banco (RLS).
    ============================================================ */
-const VERSAO = "58";
+const VERSAO = "59";
 const SB  = "https://oihyhyyhessqnpkknhsi.supabase.co";
 const KEY = "sb_publishable_T7LERNVYS8mAK0tOlWfl5A_4-yCUjie";
 const LS_SESS = "nf.sessao", LS_FILA = "nf.fila", LS_CASAL = "nf.casal", LS_REJ = "nf.recusados", LS_FRENTE = "nf.frenteLanc", LS_CONTA_PG = "nf.contaPagamento";
@@ -823,7 +869,7 @@ function janelaInicio(){
 async function carregar(){
   const mes = mesRef();
   try{
-    const [membro,cat,contas,parcelas,saldos,eventos,pagos,cartoes,conferidas,historico] = await Promise.all([
+    const [membro,cat,contas,parcelas,saldos,eventos,pagos,pagosFut,cartoes,conferidas,historico] = await Promise.all([
       rest("membro?select=user_id,nome,papel,casal_id"),
       rest("categoria?select=id,pai,filho,tipo,frentes,ativo,teto&ativo=is.true&order=pai.asc,filho.asc"),
       rest("conta_fixa?select=id,descricao,valor,dia,frente,cartao,periodicidade,mes_venc,varia,inicio,fim,par_id&ativo=is.true&order=dia.asc"),
@@ -831,6 +877,8 @@ async function carregar(){
       rest("conta_saldo?select=id,nome,frente,tipo,valor,atualizado_em,conferido_em&order=valor.desc"),
       rest("evento?select=id,data,valor,tipo,frente,descricao,forma,cartao,categoria_id,origem,obs,criado_por,parcelas,parcela_num,grupo,criado_em,baixado_em,baixa_conta_id,baixa_receber_id&data=gte."+janelaInicio()+"&order=data.desc,criado_em.desc&limit=2000"),
       rest("pagamento_conta?select=conta_fixa_id,mes_ref,valor,pago_conta_id&mes_ref=gte."+mes+"&mes_ref=lt."+mesSeguinte(mes)),
+      /* conta do mes que vem paga adiantado nao pode aparecer como a pagar */
+      rest("pagamento_conta?select=conta_fixa_id,mes_ref&mes_ref=gte."+mesSeguinte(mes)+"&mes_ref=lt."+mesSeguinte(mesSeguinte(mesSeguinte(mes)))).catch(()=>[]),
       rest("cartao?select=id,nome,dia_venc,dia_fechamento,limite,frente,debito_auto,conta_debito_id&ativo=is.true&order=nome.asc"),
       rest("fatura_conferida?select=id,cartao,mes_ref,valor_real,valor_app"),
       /* historico mensal importado do extrato, anterior ao app; se a tabela
@@ -841,7 +889,8 @@ async function carregar(){
     eu = (membro||[]).find(m=>m.user_id===meuId) || (membro && membro[0]) || {nome:"",papel:"parceiro"};
     if(eu.casal_id){ casalCache = eu.casal_id; try{ localStorage.setItem(LS_CASAL,eu.casal_id); }catch(e){} }
     const qz=expandirQuinzenais(contas||[], pagos||[]);
-    dados={mesCarga:mes,cat,contas:qz.contas,contasBase:qz.base,parcelas,saldos,eventos,pagos,cartoes,conferidas:conferidas||[],historico:historico||[],membros:membro||[],cartoesLista:cartoes.map(c=>c.nome)};
+    dados={mesCarga:mes,cat,contas:qz.contas,contasBase:qz.base,parcelas,saldos,eventos,pagos,cartoes,
+           pagosFut:chavesAdiantadas(pagosFut||[], qz.base),conferidas:conferidas||[],historico:historico||[],membros:membro||[],cartoesLista:cartoes.map(c=>c.nome)};
     ultimaCarga = Date.now();
     $("#btnSair").textContent = (eu.nome||"") + " · sair";
     montarLentes(); pintar();
@@ -882,6 +931,22 @@ function vigente(c, mes){
   if(c.inicio && mes < String(c.inicio).slice(0,7)+"-01") return false;
   if(c.fim    && mes > String(c.fim).slice(0,7)+"-01")    return false;
   return true;
+}
+
+/* Pagamento de conta de mes futuro, feito adiantado. A conta de 14 dias
+   grava a propria data em mes_ref; a comum grava o primeiro dia do mes. */
+function chavesAdiantadas(pg, base){
+  const k=new Set();
+  pg.forEach(p=>{
+    const ref=String(p.mes_ref).slice(0,10);
+    if((base||[]).some(b=>b.id===p.conta_fixa_id)) k.add("o"+idOcorr(p.conta_fixa_id, ref));
+    else k.add(p.conta_fixa_id+"|"+ref.slice(0,7));
+  });
+  return k;
+}
+function pagoAdiantado(c, m){
+  const k=dados.pagosFut; if(!k || !k.size) return false;
+  return c._occ ? k.has("o"+c.id) : k.has(c.id+"|"+m.slice(0,7));
 }
 
 /* ---------------- pagar tira dinheiro da conta ----------------
@@ -1494,9 +1559,12 @@ function fluxoDiario(r, mesesHorizonte){
   const hoje = hojeISO();
   const evs = filtra(dados.eventos);
   const mov = [];
-  const add = (data, valor, nome, det, tag)=>{
+  const add = (data, valor, nome, det, tag, ex)=>{
     if(!valor) return;
-    mov.push({ data: (data < hoje ? hoje : data), valor, nome, det, tag });
+    /* orig guarda o dia em que venceu de verdade: o que ja passou e ninguem
+       marcou entra hoje na conta do caixa, mas a tela de contas a pagar
+       precisa saber que esta atrasado */
+    mov.push(Object.assign({ data: (data < hoje ? hoje : data), orig: data, valor, nome, det, tag }, ex||{}));
   };
   let m = r.mes;
   for(let i=0;i<H;i++){
@@ -1504,8 +1572,10 @@ function fluxoDiario(r, mesesHorizonte){
     /* contas do banco, no dia em que vencem. No mes de hoje, so as que faltam. */
     r.contas.filter(c=>!c.cartao && cobraNesteMes(c,m)).forEach(c=>{
       if(agora && r.pagosIds.has(c.id)) return;
+      if(!agora && pagoAdiantado(c, m)) return;
       add(diaDoMes(m, c.dia), -(+c.valor), c.descricao,
-          "conta fixa \u00b7 "+rotulo(c.frente), "fixa");
+          "conta fixa \u00b7 "+rotulo(c.frente), "fixa",
+          {ref:{t:"fixa", id:c.id, base:(c._base||c.id), occ:!!c._occ, mes:m}, frente:c.frente, varia:!!c.varia});
     });
     /* faturas, no dia do vencimento de cada cartao. A fatura ja contem
        assinaturas e compras avulsas, entao nada aqui repete o de cima. */
@@ -1513,7 +1583,8 @@ function fluxoDiario(r, mesesHorizonte){
       const f = fatura(cd.nome, m);
       const v = aPagarFatura(cd.nome, m);
       add(diaDoMes(m, cd.dia_venc||10), -v, "Fatura "+cd.nome,
-          (f.pago ? "lan\u00e7ado depois de a fatura ser paga" : "vence dia "+(cd.dia_venc||10)), "fatura");
+          (f.pago ? "lan\u00e7ado depois de a fatura ser paga" : "vence dia "+(cd.dia_venc||10)), "fatura",
+          {ref:{t:"fatura", cartao:cd.nome, mes:m, pagoAntes:!!f.pago}, frente:cd.frente||"casa"});
     });
     m = mesSeguinte(m);
   }
@@ -1524,10 +1595,12 @@ function fluxoDiario(r, mesesHorizonte){
     if(e.forma==="cartao") return;
     if(e.data <= hoje || e.data >= limite) return;
     if(e.tipo==="gasto")
-      add(e.data, -(+e.valor), e.descricao||"Gasto", "lan\u00e7ado \u00b7 "+rotulo(e.frente), "gasto");
+      add(e.data, -(+e.valor), e.descricao||"Gasto", "lan\u00e7ado \u00b7 "+rotulo(e.frente), "gasto",
+          {ref:{t:"ev", id:e.id}, frente:e.frente, catId:e.categoria_id});
     else
       add(e.data, +(+e.valor), e.descricao||"Entrada",
-          (e.forma==="maquininha" ? "maquininha" : "entrada")+" \u00b7 "+rotulo(e.frente), "entrada");
+          (e.forma==="maquininha" ? "maquininha" : "entrada")+" \u00b7 "+rotulo(e.frente), "entrada",
+          {ref:{t:"ev", id:e.id}, frente:e.frente});
   });
   /* no mesmo dia, o dinheiro que sai vem antes do que entra: e a leitura
      prudente, e a que evita dizer que fecha um dia que na pratica nao fecha */
@@ -1539,7 +1612,7 @@ function fluxoDiario(r, mesesHorizonte){
   const porMes = {};
   mov.forEach(x=>{
     saldo += x.valor;
-    const reg = { data:x.data, valor:x.valor, nome:x.nome, det:x.det, tag:x.tag, saldo:saldo };
+    const reg = Object.assign({}, x, { saldo:saldo });
     linha.push(reg);
     if(saldo < 0 && !quebra) quebra = { data:x.data, falta:-saldo, nome:nomeCurtoConta(x.nome) };
     const k = x.data.slice(0,8)+"01";
@@ -1862,6 +1935,18 @@ function pintar(){
         : brl(r.faltaBanco)+" em contas do banco, "+brl(r.faltaFaturas)+" em faturas"
           + (proxConta ? " \u00b7 pr\u00f3xima: "+proxConta.descricao+", dia "+proxConta.dia : "")}</div></div>
 
+    ${(function(){
+      const a=contasAPagar(30);
+      const dom=somaDias(segundaDe(a.hoje),6);
+      const sem=a.itens.filter(x=>x.data<=dom).reduce((s,x)=>s+x.v,0);
+      const at=a.itens.filter(x=>x.atras);
+      return `<div class="card full abre" data-p="apagar">
+        <div class="k">A PAGAR NOS PR\u00d3XIMOS 30 DIAS</div>
+        <div class="v sm ${at.length?"bad":""}">${brl(a.total)}</div>
+        <div class="n">${a.itens.length} contas at\u00e9 ${dataCurta(a.fim)} \u00b7 ${brl0(sem)} vence esta semana${
+          at.length ? " \u00b7 <b style='color:var(--bad)'>"+at.length+" j\u00e1 venceu sem marcar</b>" : ""} \u00b7 calend\u00e1rio, semanas e tipos</div></div>`;
+    })()}
+
     <div class="card full abre" data-p="folego"><div class="k">CAIXA AGUENTA</div>
       <div class="v sm ${(fx.semCaixa||(lente!=="casa"&&lente!=="tudo"&&(reservasCaixa()[lente]||0)>0))?"":fx.meses>=6?"good":fx.meses>=3?"warn":"bad"}">${
         (fx.semCaixa||(lente!=="casa"&&lente!=="tudo"&&(reservasCaixa()[lente]||0)>0)) ? "\u2014"
@@ -1928,7 +2013,7 @@ function pintar(){
   $("#cards").querySelectorAll("[data-p]").forEach(b=>b.onclick=()=>{
     const p=b.dataset.p;
     try{
-      if(p==="cartoes") abrirCartoes(null); else abrirLista(p);
+      if(p==="cartoes") abrirCartoes(null); else if(p==="apagar") abrirAPagar(); else abrirLista(p);
     }catch(e){ toast("Não consegui abrir: "+e.message, true); }
   });
   $("#selo").textContent = selo();
@@ -3716,6 +3801,233 @@ $("#pgSalvar").onclick=async()=>{
     pagoEd=null; pintar();
   }catch(e){ $("#pgMsg").innerHTML='<div class="msg err">'+e.message+'</div>'; }
 };
+
+/* ---------------- contas a pagar, os proximos dias ----------------
+   Tudo que sai do caixa num periodo: contas do banco no dia em que vencem,
+   faturas no dia do vencimento de cada cartao e lancamentos com data futura.
+   E a mesma linha do tempo do folego (fluxoDiario), entao os dois numeros
+   nunca discordam. O que venceu e ninguem marcou aparece como atrasado. */
+let apDias = 30, apSel = null, apItens = [];
+const AP_TIPOS = [
+  {k:"fatura",  n:"Faturas de cartão"},
+  {k:"imposto", n:"Impostos", re:/\b(das|darf|iss|irpj|csll|inss|ipva|iptu|imposto|simples|pis|cofins|gps|fgts|irrf)\b/i},
+  {k:"pessoas", n:"Pessoas", re:/(funcion|diarista|secret|sal[aá]rio|pr[oó]-?labore|bab[aá]|motorista|folha|contador|contabil)/i},
+  {k:"espaco",  n:"Aluguel e salas", re:/(aluguel|condom|ateli|sala|livance|saludia|coworking)/i},
+  {k:"casa",    n:"Luz, água, internet", re:/(luz|enel|energia|água|agua|sabesp|gás|\bgas\b|comgás|internet|vivo|claro|\btim\b|celular|telefon)/i},
+  {k:"seguro",  n:"Seguros e financiamentos", re:/(seguro|financ|cons[oó]rcio|empr[eé]stimo)/i},
+  {k:"fixa",    n:"Outras contas fixas"},
+  {k:"gasto",   n:"Lançamentos com data"}
+];
+function apTipoDe(x){
+  if(x.tag==="fatura") return "fatura";
+  if(x.tag==="gasto"){
+    const c=(dados.cat||[]).find(k=>k.id===x.catId);
+    const txt=(x.nome||"")+" "+(c?nomeCat(c):"");
+    const t=AP_TIPOS.find(t=>t.re && t.re.test(txt) && t.k==="imposto");
+    return t ? "imposto" : "gasto";
+  }
+  const t=AP_TIPOS.find(t=>t.re && t.re.test(x.nome||""));
+  return t ? t.k : "fixa";
+}
+function brlK(v){
+  v=Math.abs(+v||0);
+  if(v>=1000000) return (v/1000000).toLocaleString("pt-BR",{maximumFractionDigits:1})+" mi";
+  if(v>=1000) return (v/1000).toLocaleString("pt-BR",{maximumFractionDigits: v>=10000?0:1})+" mil";
+  return Math.round(v).toLocaleString("pt-BR");
+}
+function segundaDe(iso){ const d=new Date(iso+"T12:00:00"); const w=(d.getDay()+6)%7; return somaDias(iso,-w); }
+/* dia em que a fatura daquele mes fecha. Compra feita a partir desse dia ja
+   vai para a seguinte, entao dali em diante o valor do banco nao muda mais. */
+function fechamentoDe(nomeCartao, m){
+  const cd=(dados.cartoes||[]).find(x=>x.nome===nomeCartao);
+  if(!cd || !cd.dia_fechamento) return null;
+  const venc=+cd.dia_venc||10, fech=+cd.dia_fechamento;
+  return diaDoMes(venc<fech ? mesAnterior(m) : m, fech);
+}
+function contasAPagar(dias){
+  const hoje=hojeISO(), fim=somaDias(hoje, dias-1);
+  const r=resumo();
+  const fx=fluxoDiario(r, Math.ceil(dias/28)+2);
+  const itens=fx.mov.filter(x=>x.valor<0 && x.data<=fim).map(x=>Object.assign({}, x, {v:-x.valor, atras:x.orig<hoje}));
+  /* fatura de mes passado que ninguem marcou como paga: fora da linha do
+     tempo do folego, mas e conta em aberto e precisa aparecer aqui */
+  const mes=mesRef();
+  (r.parc||[]).filter(p=>p.mes_ref<mes && !p.pago && +p.valor>0).forEach(p=>{
+    const cd=(dados.cartoes||[]).find(x=>x.nome===p.cartao); if(!cd) return;
+    const v=aPagarFatura(p.cartao, p.mes_ref); if(!(v>0)) return;
+    itens.push({data:hoje, orig:diaDoMes(p.mes_ref, cd.dia_venc||10), v:v, valor:-v, nome:"Fatura "+p.cartao,
+      det:"fatura de "+nomeMes(p.mes_ref)+" sem marca de paga", tag:"fatura", atras:true,
+      ref:{t:"fatura", cartao:p.cartao, mes:p.mes_ref}, frente:cd.frente||"casa"});
+  });
+  itens.sort((a,b)=> a.data<b.data?-1:a.data>b.data?1:(b.v-a.v));
+  itens.forEach(x=>{ x.tipo=apTipoDe(x); x.st=apStatus(x); });
+  /* caixa: comeca no de hoje e anda com tudo, entradas datadas incluidas */
+  let saldo=fx.inicio, baixo={data:hoje, saldo:fx.inicio}, entra=0;
+  const mv=fx.mov.filter(x=>x.data<=fim);
+  mv.forEach((x,i)=>{
+    saldo += x.valor; if(x.valor>0) entra += x.valor;
+    const fimDoDia = (i===mv.length-1) || mv[i+1].data!==x.data;
+    if(fimDoDia && saldo<baixo.saldo) baixo={data:x.data, saldo:saldo};
+  });
+  const atrasoFora = itens.filter(x=>x.det && /sem marca de paga/.test(x.det)).reduce((a,x)=>a+x.v,0);
+  return {hoje, fim, itens, total:itens.reduce((a,x)=>a+x.v,0), caixa:fx.inicio, entra,
+          fimSaldo:saldo-atrasoFora, baixo, semCaixa:fx.semCaixa};
+}
+function apStatus(x){
+  if(x.atras) return {c:"bad", t:"venceu "+dataCurta(x.orig)};
+  if(x.tag==="fatura" && x.ref){
+    const cf=(dados.conferidas||[]).find(k=>k.cartao===x.ref.cartao && k.mes_ref===x.ref.mes);
+    if(cf) return {c:"ok", t:"valor conferido"};
+    const fe=fechamentoDe(x.ref.cartao, x.ref.mes);
+    if(fe && hojeISO()>=fe) return {c:"warn", t:"fechou, conferir"};
+    return {c:"neu", t: fe ? "fecha "+dataCurta(fe) : "ainda aberta"};
+  }
+  /* conta que varia (luz, imposto) sempre vem estimada: e informacao, nao alarme */
+  if(x.tag==="fixa" && x.varia) return {c:"neu", t:"valor estimado"};
+  return {c:"ok", t:"valor certo"};
+}
+function abrirAPagar(){
+  apSel=null;
+  pintarAPagar();
+  abrirSheet("#sheetPagar");
+}
+function pintarAPagar(){
+  const a=contasAPagar(apDias); apItens=a.itens;
+  const nomeLente=(FRENTES.find(f=>f.id===lente)||{}).nome||"Tudo";
+  $("#apSub").textContent = "Contas do banco, faturas e lançamentos com data · "
+    + dataCurta(a.hoje)+" a "+dataCurta(a.fim) + " · "+nomeLente;
+  $("#apJanela").innerHTML=[7,15,30,60].map(d=>'<button class="chip'+(d===apDias?" on":"")+'" data-d="'+d+'">'+d+' dias</button>').join("");
+  $("#apJanela").querySelectorAll("[data-d]").forEach(b=>b.onclick=()=>{ apDias=+b.dataset.d; apSel=null; pintarAPagar(); });
+
+  /* ---- os quatro numeros ---- */
+  const domingo=somaDias(segundaDe(a.hoje),6);
+  const semana=a.itens.filter(x=>x.data<=domingo);
+  const atras=a.itens.filter(x=>x.atras);
+  const sTot=semana.reduce((s,x)=>s+x.v,0), atTot=atras.reduce((s,x)=>s+x.v,0);
+  const corFim = a.semCaixa ? "" : a.fimSaldo<0 ? "bad" : a.baixo.saldo<0 ? "bad" : "good";
+  $("#apKpis").innerHTML = `
+    <div class="kpi"><div class="l">A pagar (${apDias} dias)</div><div class="v">${brl0(a.total)}</div>
+      <div class="d">${a.itens.length} ${a.itens.length===1?"conta":"contas"} até ${dataCurta(a.fim)}</div></div>
+    <div class="kpi"><div class="l">Vence esta semana</div><div class="v">${brl0(sTot)}</div>
+      <div class="d">${dataCurta(a.hoje)} a ${dataCurta(domingo)} · ${semana.length} ${semana.length===1?"conta":"contas"}</div></div>
+    <div class="kpi"><div class="l">Já venceu, sem marcar</div><div class="v ${atras.length?"bad":"good"}">${atras.length?brl0(atTot):"nada"}</div>
+      <div class="d">${atras.length ? "<b style='color:var(--bad)'>"+atras.length+" "+(atras.length===1?"conta":"contas")+"</b> para marcar ou pagar" : "tudo que venceu está marcado"}</div></div>
+    <div class="kpi"><div class="l">Caixa em ${dataCurta(a.fim)}</div><div class="v ${corFim}">${a.semCaixa?"—":brl0(a.fimSaldo)}</div>
+      <div class="d">${a.semCaixa ? "frente coberta pelo caixa do casal" :
+        (a.entra>0 ? "com "+brl0(a.entra)+" já datado para entrar" : "sem nada datado para entrar")
+        + " · menor: "+brl0(a.baixo.saldo)+" em "+dataCurta(a.baixo.data)}</div></div>`;
+
+  /* ---- calendario: semana comeca na segunda, mais escuro sai mais ---- */
+  const porDia={};
+  a.itens.forEach(x=>{ porDia[x.data]=(porDia[x.data]||0)+x.v; });
+  const maxDia=Math.max(1, ...Object.values(porDia));
+  const ini=segundaDe(a.hoje), ult=somaDias(segundaDe(a.fim),6);
+  let cal='<div class="cal">'+["Seg","Ter","Qua","Qui","Sex","Sáb","Dom"].map(w=>'<div class="wd">'+w+'</div>').join("");
+  for(let d=ini; d<=ult; d=somaDias(d,1)){
+    const v=porDia[d]||0, fora=(d<a.hoje || d>a.fim);
+    const al = v>0 ? (0.16 + 0.74*Math.sqrt(v/maxDia)) : 0;
+    const temAtras = d===a.hoje && atras.length;
+    cal += '<div class="cd'+(fora?" fora":"")+(d===a.hoje?" hoje":"")+(d===apSel?" sel":"")+(v>0?" tem":"")+'" data-dia="'+d+'"'
+      + (v>0?' style="background:rgba(91,155,234,'+al.toFixed(2)+')"':'')+'>'
+      + '<span class="dn">'+(+d.slice(8,10))+(d===a.hoje?' <i>hoje</i>':'')+'</span>'
+      + (v>0?'<span class="dx'+(temAtras?" at":"")+'">'+brlK(v)+'</span>':'')+'</div>';
+  }
+  cal+='</div>';
+  $("#apCal").innerHTML = cal;
+  $("#apCal").querySelectorAll(".cd.tem").forEach(el=>el.onclick=()=>{
+    apSel = (apSel===el.dataset.dia) ? null : el.dataset.dia; pintarAPagar(); });
+  if(apSel){
+    const doDia=a.itens.filter(x=>x.data===apSel);
+    $("#apDia").innerHTML = '<div class="list" style="margin-top:8px">'
+      + '<div class="sep">'+rotuloDiaAP(apSel)+' · <b>'+brl(doDia.reduce((s,x)=>s+x.v,0))+'</b></div>'
+      + doDia.map(x=>linhaAP(x)).join("")+'</div>';
+  }else $("#apDia").innerHTML = '<p class="nota" style="font-size:12px;color:var(--ink3);margin:8px 2px 0">Toque num dia para ver o que vence nele.</p>';
+
+  /* ---- conferir antes de pagar ---- */
+  const ordem={bad:0,warn:1,neu:2,ok:3};
+  const conf=a.itens.filter(x=>x.tag==="fatura" || x.varia || x.atras)
+    .slice().sort((p,q)=> (ordem[p.st.c]-ordem[q.st.c]) || (p.data<q.data?-1:1));
+  const atencao=conf.filter(x=>x.st.c==="bad"||x.st.c==="warn").length;
+  $("#apConfN").textContent = conf.length ? (atencao ? atencao+" de "+conf.length+" pedem atenção" : "tudo em dia") : "";
+  $("#apConf").innerHTML = conf.length ? conf.slice(0,8).map(x=>`
+    <div class="row tap" data-ap="${apItens.indexOf(x)}">
+      <div class="mid"><div class="t">${x.nome}</div><div class="s">vence ${dataCurta(x.orig)} · ${rotulo(x.frente||"casa")}</div></div>
+      <div style="text-align:right"><div class="amt">${brl(x.v)}</div><span class="pill ${x.st.c}">${x.st.t}</span></div>
+    </div>`).join("") + (conf.length>8?'<div class="empty" style="padding:10px">mais '+(conf.length-8)+' na lista completa, abaixo</div>':"")
+    : '<div class="empty">Nenhuma fatura nem conta variável no período.</div>';
+
+  /* ---- saidas por semana ---- */
+  const sem=[];
+  for(let s0=ini; s0<=a.fim; s0=somaDias(s0,7)){
+    const s1=somaDias(s0,6);
+    sem.push({ini:s0, v:a.itens.filter(x=>x.data>=s0 && x.data<=s1).reduce((s,x)=>s+x.v,0)});
+  }
+  const maxS=Math.max(1,...sem.map(x=>x.v)), iMax=sem.reduce((b,x,i)=>x.v>sem[b].v?i:b,0);
+  const W=320,H=150,top=22,base=124, n=sem.length, gap=10, bw=Math.min(46,(W-gap*(n+1))/n);
+  const off=(W-(n*bw+(n-1)*gap))/2;
+  let svg='<svg viewBox="0 0 '+W+' '+H+'" role="img" aria-label="Saídas por semana">';
+  sem.forEach((x,i)=>{
+    const h=Math.max(x.v>0?2:0,(base-top)*x.v/maxS), xx=off+i*(bw+gap), yy=base-h;
+    svg+='<rect x="'+xx.toFixed(1)+'" y="'+yy.toFixed(1)+'" width="'+bw.toFixed(1)+'" height="'+h.toFixed(1)+'" rx="4" fill="'+(i===iMax&&x.v>0?"#5b9bea":"rgba(91,155,234,.38)")+'"/>';
+    svg+='<text x="'+(xx+bw/2).toFixed(1)+'" y="'+(yy-6).toFixed(1)+'" text-anchor="middle" font-size="10" font-weight="'+(i===iMax?"700":"500")+'" fill="#f6f3ea">'+(x.v>0?brlK(x.v):"")+'</text>';
+    svg+='<text x="'+(xx+bw/2).toFixed(1)+'" y="'+(base+16)+'" text-anchor="middle" font-size="10" fill="#a8a89f">'+dataCurta(x.ini)+'</text>';
+  });
+  svg+='<line x1="0" x2="'+W+'" y1="'+base+'" y2="'+base+'" stroke="#37372f"/></svg>';
+  $("#apSemanas").innerHTML = svg + '<div class="nota" style="font-size:11px;color:var(--ink3);padding:0 6px 4px">semana começando na segunda · em destaque, a mais pesada'
+    + (sem[iMax].v>0 ? ": "+brl0(sem[iMax].v)+" na semana de "+dataCurta(sem[iMax].ini) : "")+'</div>';
+
+  /* ---- por tipo, e por frente quando a lente e Tudo ---- */
+  const barras=(lista,tot)=>lista.filter(x=>x.v>0).sort((p,q)=>q.v-p.v).map((x,i)=>`
+    <div style="padding:7px 0">
+      <div style="display:flex;justify-content:space-between;font-size:13px"><span>${x.n}</span><b style="color:${i===0?"var(--blue)":"var(--ink)"}">${brl0(x.v)}</b></div>
+      <div class="barra"><i style="width:${(100*x.v/Math.max(1,tot)).toFixed(1)}%;background:${i===0?"var(--blue)":"rgba(91,155,234,.45)"}"></i></div>
+    </div>`).join("");
+  const porTipo=AP_TIPOS.map(t=>({n:t.n, v:a.itens.filter(x=>x.tipo===t.k).reduce((s,x)=>s+x.v,0)}));
+  let tipos = barras(porTipo, a.total);
+  if(lente==="tudo"){
+    const porFrente=["casa","consultorio","confeitaria"].map(f=>({n:rotulo(f).replace(/^./,c=>c.toUpperCase()), v:a.itens.filter(x=>(x.frente||"casa")===f).reduce((s,x)=>s+x.v,0)}));
+    tipos += '<div class="lbl" style="margin:14px 0 2px">Por frente</div>' + barras(porFrente, a.total)
+      + '<p class="nota">A fatura conta inteira para a frente dona do cartão.</p>';
+  }
+  $("#apTipos").innerHTML = tipos ? tipos + '<p class="nota">Total: '+brl(a.total)+' em '+a.itens.length+' contas.</p>' : '<div class="empty">Nada a pagar no período.</div>';
+
+  /* ---- a lista inteira, dia a dia ---- */
+  let html="", dia=null;
+  a.itens.forEach(x=>{
+    if(x.data!==dia){ dia=x.data;
+      html+='<div class="sep">'+rotuloDiaAP(dia)+' · <b>'+brl(porDia[dia])+'</b></div>'; }
+    html+=linhaAP(x);
+  });
+  $("#apLista").innerHTML = html || '<div class="empty">Nada a pagar no período.</div>';
+
+  document.querySelectorAll("#sheetPagar [data-ap]").forEach(el=>el.onclick=()=>abrirItemAP(apItens[+el.dataset.ap]));
+}
+function rotuloDiaAP(d){
+  const hoje=hojeISO();
+  if(d===hoje) return "Hoje, "+dataCurta(d);
+  if(d===somaDias(hoje,1)) return "Amanhã, "+dataCurta(d);
+  const w=["domingo","segunda","terça","quarta","quinta","sexta","sábado"][new Date(d+"T12:00:00").getDay()];
+  return w.charAt(0).toUpperCase()+w.slice(1)+", "+dataCurta(d);
+}
+function linhaAP(x){
+  const ic = x.atras ? "atras" : x.st.c==="warn" ? "falta" : "";
+  const sim = x.tag==="fatura" ? "▤" : x.tag==="gasto" ? "•" : "↻";
+  return `<div class="row tap" data-ap="${apItens.indexOf(x)}">
+    <div class="ic ${ic}">${sim}</div>
+    <div class="mid"><div class="t">${x.nome}</div><div class="s">${x.atras?"<span style='color:var(--bad)'>venceu "+dataCurta(x.orig)+"</span> · ":""}${x.det||""}${x.st.c!=="ok"&&!x.atras?" · "+x.st.t:""}</div></div>
+    <div class="amt out">${brl(x.v)}</div></div>`;
+}
+function abrirItemAP(x){
+  if(!x || !x.ref) return;
+  fecharSheet("#sheetPagar");
+  try{
+    if(x.ref.t==="fatura"){ abrirCartoes(x.ref.cartao); if(x.ref.mes!==mesRef()){ cdMes=x.ref.mes; pintarCartoes(); } }
+    else if(x.ref.t==="ev") abrirFolha(x.ref.id);
+    else if(x.ref.mes===mesRef()) abrirLista("contas");
+    else abrirConta(x.ref.base);
+  }catch(e){ toast("Não consegui abrir: "+e.message, true); }
+}
+$("#apFechar").onclick=()=>fecharSheet("#sheetPagar");
 
 /* ---------------- lançamento ---------------- */
 function frentesPermitidas(c){

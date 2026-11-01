@@ -647,7 +647,7 @@ select.inp{appearance:none;background-image:linear-gradient(45deg,transparent 50
    A chave abaixo e publica de proposito: ela sozinha nao le nada.
    Quem decide o que cada pessoa enxerga e o proprio banco (RLS).
    ============================================================ */
-const VERSAO = "59";
+const VERSAO = "60";
 const SB  = "https://oihyhyyhessqnpkknhsi.supabase.co";
 const KEY = "sb_publishable_T7LERNVYS8mAK0tOlWfl5A_4-yCUjie";
 const LS_SESS = "nf.sessao", LS_FILA = "nf.fila", LS_CASAL = "nf.casal", LS_REJ = "nf.recusados", LS_FRENTE = "nf.frenteLanc", LS_CONTA_PG = "nf.contaPagamento";
@@ -4292,7 +4292,8 @@ function notaMaquininha(){
     + 'Se a primeira parcela cair em outra data, é só mudar o campo ao lado.</div>';
 }
 
-const OPC_PARC=[1,2,3,4,5,6,10,12,18];
+/* todas de 1 a 12, mais 18 e 24: faltavam 7, 8, 9 e 11, e compra em 9x nao tinha como ser lancada */
+const OPC_PARC=[1,2,3,4,5,6,7,8,9,10,11,12,18,24];
 function pintarParcelas(){
   const box=$("#fParcelas"), caixa=$("#fParcelasBox");
   if(form.id && !(form.grupo && !form.grupo.maq)){ caixa.classList.add("hide"); return; }   /* editando avulso: nao parcela por aqui */
